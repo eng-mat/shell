@@ -125,6 +125,8 @@ echo "Results have been saved to $OUTPUT_FILE"
 
 
 
+resource.type="gce_subnetwork"
+resource.labels.subnetwork="projects/your-host-project-id/regions/region-1/subnetworks/your-subnet-name"
 
 
 
