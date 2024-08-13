@@ -15,40 +15,40 @@ OUTPUT_FILE="output.txt"
 # Clear the output file before writing
 > "$OUTPUT_FILE"
 
-echo "Starting to check subnets in host project $HOST_PROJECT_ID" >> "$OUTPUT_FILE"
-
-# Function to get service projects for a given subnet
-get_service_projects_for_subnet() {
+# Function to check which service projects are allowed to use a given subnet
+get_subnet_usage() {
     local subnet_name=$1
+    local region=$2
 
-    echo "Checking subnet: $subnet_name" >> "$OUTPUT_FILE"
+    # Get the full subnet URI
+    subnet_uri=$(gcloud compute networks subnets describe "$subnet_name" \
+        --project="$HOST_PROJECT_ID" --region="$region" \
+        --format="get(selfLink)")
 
-    # List all associated service projects for the Shared VPC
-    service_projects=$(gcloud compute shared-vpc associated-projects list $HOST_PROJECT_ID --format="value(projectId)")
-    
-    if [[ -z "$service_projects" ]]; then
-        echo "No associated service projects found for host project $HOST_PROJECT_ID." >> "$OUTPUT_FILE"
+    if [[ -z "$subnet_uri" ]]; then
+        echo "Error: Subnet $subnet_name not found in region $region." >> "$OUTPUT_FILE"
         return
     fi
 
-    for project_id in $service_projects; do
-        echo "Checking service project: $project_id" >> "$OUTPUT_FILE"
-        for region in "${REGIONS[@]}"; do
-            echo "Checking region: $region" >> "$OUTPUT_FILE"
-            # Check if the subnet exists in the current service project across both regions
-            subnet_exists=$(gcloud compute networks subnets list --project="$project_id" --filter="name=$subnet_name AND region=$region" --format="value(name)")
-            if [[ "$subnet_exists" == "$subnet_name" ]]; then
-                echo "  - Used by service project: $project_id (Region: $region)" >> "$OUTPUT_FILE"
-            fi
-        done
+    echo "Checking subnet: $subnet_name in region: $region" >> "$OUTPUT_FILE"
+
+    # Find all projects that have access to this subnet
+    gcloud organizations policies list --filter="constraints/compute.restrictSharedVpcSubnetworks" --format="json" | \
+    jq -r ".[] | select(.name | contains(\"$HOST_PROJECT_ID\")) | .spec.rules[].values.allowed[]" | \
+    grep "$subnet_uri" | while read -r policy; do
+        # Extract the project ID from the policy
+        project_id=$(echo "$policy" | cut -d/ -f6)
+        echo "  - Subnet used by service project: $project_id" >> "$OUTPUT_FILE"
     done
 }
 
 # Loop through each subnet and find associated service projects
 while IFS= read -r subnet; do
-    echo "---------------------------------" >> "$OUTPUT_FILE"
-    echo "Subnet: $subnet" >> "$OUTPUT_FILE"
-    get_service_projects_for_subnet "$subnet"
+    for region in "${REGIONS[@]}"; do
+        echo "---------------------------------" >> "$OUTPUT_FILE"
+        echo "Subnet: $subnet" >> "$OUTPUT_FILE"
+        get_subnet_usage "$subnet" "$region"
+    done
 done < "$SUBNETS_FILE"
 
 echo "Results have been saved to $OUTPUT_FILE"
