@@ -191,6 +191,9 @@ HOST_PROJECT_ID="pkd-prk"
 # Specify the subnet name you want to check
 SUBNET_NAME="jujrjtdl-sn"
 
+# Specify the full subnetwork URL
+SUBNET_URL="projects/$HOST_PROJECT_ID/regions/us-central1/subnetworks/$SUBNET_NAME"
+
 # Output file
 OUTPUT_FILE="output.txt"
 
@@ -199,34 +202,38 @@ OUTPUT_FILE="output.txt"
 
 echo "Checking which service project is using subnet $SUBNET_NAME in host project $HOST_PROJECT_ID" >> "$OUTPUT_FILE"
 
-# Get the region of the subnet (assuming it's unique, adjust if needed)
-REGION=$(gcloud compute networks subnets list --project="$HOST_PROJECT_ID" --filter="name=$SUBNET_NAME" --format="value(region)")
+# Get the organization ID
+ORG_ID=$(gcloud organizations list --format="value(ID)")
 
-if [ -z "$REGION" ]; then
-    echo "Error: Subnet $SUBNET_NAME not found in project $HOST_PROJECT_ID." >> "$OUTPUT_FILE"
+if [ -z "$ORG_ID" ]; then
+    echo "Error: Unable to retrieve organization ID." >> "$OUTPUT_FILE"
     exit 1
 fi
 
-echo "Subnet $SUBNET_NAME found in region $REGION." >> "$OUTPUT_FILE"
+echo "Organization ID: $ORG_ID" >> "$OUTPUT_FILE"
 
-# Get the IAM policy for the specific subnet
-IAM_POLICY=$(gcloud compute networks subnets get-iam-policy "$SUBNET_NAME" --project="$HOST_PROJECT_ID" --region="$REGION" --format="json")
+# Get the organization policy for the constraint "constraints/compute.restrictSharedVpcSubnetworks"
+ORG_POLICY=$(gcloud org-policies describe "constraints/compute.restrictSharedVpcSubnetworks" --organization="$ORG_ID" --format="json")
 
-if [ -z "$IAM_POLICY" ]; then
-    echo "Error: Unable to retrieve IAM policy for subnet $SUBNET_NAME." >> "$OUTPUT_FILE"
+if [ -z "$ORG_POLICY" ]; then
+    echo "Error: Unable to retrieve organization policy for restrict shared VPC subnetworks." >> "$OUTPUT_FILE"
     exit 1
 fi
 
-# Parse the IAM policy to find service project IDs
-echo "$IAM_POLICY" | jq -r '.bindings[] | select(.role=="roles/compute.networkUser") | .members[]' | while read -r member; do
-    if [[ $member == serviceAccount:* ]]; then
-        # Extract project ID from the service account email
-        service_account=$(echo "$member" | cut -d: -f2)
-        project_id=$(echo "$service_account" | cut -d@ -f2 | cut -d. -f1)
-        echo "  - Subnet $SUBNET_NAME is used by service project: $project_id" >> "$OUTPUT_FILE"
+# Debug: Print organization policy to verify structure
+echo "Organization Policy: $ORG_POLICY" >> "$OUTPUT_FILE"
+
+# Extract allowed subnetwork URLs and match with the subnet
+echo "$ORG_POLICY" | jq -r '.listPolicy.allowedValues[]?' | while read -r allowed_value; do
+    if [[ "$allowed_value" == *"$SUBNET_URL"* ]]; then
+        # Extract the project ID from the allowed_value
+        project_id=$(echo "$allowed_value" | sed -n 's|^projects/\([^/]*\)/.*$|\1|p')
+        echo "  - Subnet $SUBNET_NAME is allowed for service project: $project_id" >> "$OUTPUT_FILE"
     fi
 done
 
+if ! grep -q "allowed for service project" "$OUTPUT_FILE"; then
+    echo "No service projects found using subnet $SUBNET_NAME." >> "$OUTPUT_FILE"
+fi
+
 echo "Results have been saved to $OUTPUT_FILE"
-
-
