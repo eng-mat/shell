@@ -48,3 +48,72 @@ while IFS= read -r subnet; do
 done < "$SUBNETS_FILE"
 
 echo "Results have been saved to $OUTPUT_FILE"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#!/bin/bash
+
+# Specify the host project ID
+HOST_PROJECT_ID="your-host-project-id"
+
+# Specify the region where your subnets might be located
+REGION="region-1"
+
+# Read subnet names from the text file
+SUBNETS_FILE="subnets.txt"
+
+# Output file
+OUTPUT_FILE="output.txt"
+
+# Clear the output file before writing
+> "$OUTPUT_FILE"
+
+echo "Starting to check subnets for host project $HOST_PROJECT_ID in region $REGION" >> "$OUTPUT_FILE"
+
+# Function to query logs and find associated service projects
+query_logs_for_subnet() {
+    local subnet_name=$1
+
+    # Define the query to extract logs related to the subnet
+    query="resource.type=\"gce_subnetwork\" AND resource.labels.subnetwork=\"projects/$HOST_PROJECT_ID/regions/$REGION/subnetworks/$subnet_name\""
+
+    # Run the query in Logs Explorer
+    results=$(gcloud logging read "$query" --format="json" --limit=100)
+
+    if [[ -z "$results" ]]; then
+        echo "Error: No logs found for subnet $subnet_name in region $REGION for project $HOST_PROJECT_ID." >> "$OUTPUT_FILE"
+        return
+    fi
+
+    echo "Checking subnet: $subnet_name in region: $REGION" >> "$OUTPUT_FILE"
+
+    # Inspect the results to find the correct path to project ID
+    echo "$results" | jq '.[0]' # Check the first log entry to understand its structure
+
+    # Extract project IDs from the logs
+    echo "$results" | jq -r '.[] | .resource.labels.project_id // .jsonPayload.projectId // .logName' | sort -u | while read -r project_id; do
+        echo "  - Subnet is used by service project: $project_id" >> "$OUTPUT_FILE"
+    done
+}
+
+# Loop through each subnet and find associated service projects
+while IFS= read -r subnet; do
+    echo "---------------------------------" >> "$OUTPUT_FILE"
+    echo "Subnet: $subnet" >> "$OUTPUT_FILE"
+    query_logs_for_subnet "$subnet"
+done < "$SUBNETS_FILE"
+
+echo "Results have been saved to $OUTPUT_FILE"
