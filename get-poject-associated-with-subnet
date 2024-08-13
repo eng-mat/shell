@@ -1,0 +1,29 @@
+#
+
+#!/bin/bash
+
+# Specify the host project ID
+HOST_PROJECT_ID="your-host-project-id"
+
+# Read subnet names from the text file
+SUBNETS_FILE="subnets.txt"
+
+# Function to get service projects for a given subnet
+get_service_projects_for_subnet() {
+    local subnet_name=$1
+
+    # List service projects associated with the Shared VPC
+    gcloud compute shared-vpc associated-projects list $HOST_PROJECT_ID --format="value(projectId)" | while read project_id; do
+        # Check if the subnet is used in this project
+        gcloud compute networks subnets describe $subnet_name \
+            --project=$HOST_PROJECT_ID \
+            --region=$REGION --format="value(network)" --filter="project:$project_id" --quiet
+    done
+}
+
+# Loop through each subnet and find associated service projects
+while IFS= read -r subnet; do
+    echo "Subnet: $subnet"
+    get_service_projects_for_subnet "$subnet"
+    echo "---------------------------------"
+done < "$SUBNETS_FILE"
