@@ -62,3 +62,59 @@ while IFS= read -r subnet; do
 done < "$SUBNETS_FILE"
 
 echo "Results have been saved to $OUTPUT_FILE"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#!/bin/bash
+
+# Specify the host project ID
+HOST_PROJECT_ID="your-host-project-id"
+
+# Specify the subnet name you want to check
+SUBNET_NAME="your-subnet-name"
+
+# Output file
+OUTPUT_FILE="output.txt"
+
+# Clear the output file before writing
+> "$OUTPUT_FILE"
+
+echo "Starting to check service projects using subnet $SUBNET_NAME" >> "$OUTPUT_FILE"
+
+# Get the list of service projects associated with the Shared VPC
+SERVICE_PROJECTS=$(gcloud compute shared-vpc associated-projects list --project="$HOST_PROJECT_ID" --format="value(project)")
+
+# Function to check if the subnet is used in a service project
+check_subnet_usage() {
+    local project_id=$1
+
+    # List subnets in the service project and check if the subnet is listed
+    local subnets=$(gcloud compute networks subnets list --project="$project_id" --format="value(name)")
+
+    if echo "$subnets" | grep -q "$SUBNET_NAME"; then
+        echo "  - Subnet $SUBNET_NAME is used by service project: $project_id" >> "$OUTPUT_FILE"
+    fi
+}
+
+# Loop through each service project and check for the subnet
+for project in $SERVICE_PROJECTS; do
+    echo "Checking service project: $project" >> "$OUTPUT_FILE"
+    check_subnet_usage "$project"
+done
+
+echo "Results have been saved to $OUTPUT_FILE"
+
