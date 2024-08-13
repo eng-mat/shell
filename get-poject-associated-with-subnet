@@ -21,9 +21,10 @@ get_service_projects_for_subnet() {
 
     # List all associated service projects for the Shared VPC
     service_projects=$(gcloud compute shared-vpc associated-projects list $HOST_PROJECT_ID --format="value(projectId)")
+    
     if [[ -z "$service_projects" ]]; then
-        echo "Error: No associated service projects found for host project $HOST_PROJECT_ID." >&2
-        exit 1
+        echo "No associated service projects found for host project $HOST_PROJECT_ID." >> "$OUTPUT_FILE"
+        return
     fi
 
     for project_id in $service_projects; do
