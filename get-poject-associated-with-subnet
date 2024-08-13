@@ -17,38 +17,27 @@ OUTPUT_FILE="output.txt"
 
 echo "Starting to check subnets for host project $HOST_PROJECT_ID" >> "$OUTPUT_FILE"
 
-# Get the list of service projects associated with the host project
-SERVICE_PROJECTS=$(gcloud compute shared-vpc associated-projects list "$HOST_PROJECT_ID" --format="value(projectId)")
-
-# Function to check which service projects are using a given subnet
-get_service_projects_for_subnet() {
+# Function to query logs and find associated service projects
+query_logs_for_subnet() {
     local subnet_name=$1
     local region=$2
 
-    # Get the full subnet URI
-    subnet_uri=$(gcloud compute networks subnets describe "$subnet_name" \
-        --project="$HOST_PROJECT_ID" --region="$region" \
-        --format="get(selfLink)")
+    # Define the query to extract logs related to the subnet
+    query="resource.type=\"gce_subnetwork\" AND resource.labels.subnetwork=\"projects/$HOST_PROJECT_ID/regions/$region/subnetworks/$subnet_name\""
 
-    if [[ -z "$subnet_uri" ]]; then
-        echo "Error: Subnet $subnet_name not found in region $region for project $HOST_PROJECT_ID." >> "$OUTPUT_FILE"
+    # Run the query in Logs Explorer
+    results=$(gcloud logging read "$query" --format="json" --limit=100)
+
+    if [[ -z "$results" ]]; then
+        echo "Error: No logs found for subnet $subnet_name in region $region for project $HOST_PROJECT_ID." >> "$OUTPUT_FILE"
         return
     fi
 
     echo "Checking subnet: $subnet_name in region: $region" >> "$OUTPUT_FILE"
 
-    # Check each service project for subnet usage
-    for project_id in $SERVICE_PROJECTS; do
-        echo "Checking service project: $project_id" >> "$OUTPUT_FILE"
-
-        # Check if the subnet is available in the service project
-        subnet_exists=$(gcloud compute networks subnets list --project="$project_id" --filter="name=$subnet_name AND region=$region" --format="value(name)")
-
-        if [[ "$subnet_exists" == "$subnet_name" ]]; then
-            echo "  - Subnet is used by service project: $project_id" >> "$OUTPUT_FILE"
-        else
-            echo "  - Subnet is NOT used by service project: $project_id" >> "$OUTPUT_FILE"
-        fi
+    # Extract project IDs from the logs
+    echo "$results" | jq -r '.[] | .resource.labels.project_id' | sort -u | while read -r project_id; do
+        echo "  - Subnet is used by service project: $project_id" >> "$OUTPUT_FILE"
     done
 }
 
@@ -57,7 +46,7 @@ while IFS= read -r subnet; do
     for region in "${REGIONS[@]}"; do
         echo "---------------------------------" >> "$OUTPUT_FILE"
         echo "Subnet: $subnet" >> "$OUTPUT_FILE"
-        get_service_projects_for_subnet "$subnet" "$region"
+        query_logs_for_subnet "$subnet" "$region"
     done
 done < "$SUBNETS_FILE"
 
