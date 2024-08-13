@@ -3,8 +3,8 @@
 # Specify the host project ID
 HOST_PROJECT_ID="your-host-project-id"
 
-# Specify the region (replace with the appropriate region of your subnets)
-REGION="your-region"
+# Specify the regions where your subnets might be located
+REGIONS=("region-1" "region-2")
 
 # Read subnet names from the text file
 SUBNETS_FILE="subnets.txt"
@@ -21,10 +21,12 @@ get_service_projects_for_subnet() {
 
     # List all associated service projects for the Shared VPC
     gcloud compute shared-vpc associated-projects list $HOST_PROJECT_ID --format="value(projectId)" | while read project_id; do
-        # Check if the subnet exists in the current service project
-        if gcloud compute networks subnets list --project=$project_id --filter="name=$subnet_name AND region=($REGION)" --format="value(name)" | grep -q "^$subnet_name$"; then
-            echo "  - Used by service project: $project_id" >> "$OUTPUT_FILE"
-        fi
+        # Check if the subnet exists in the current service project across both regions
+        for region in "${REGIONS[@]}"; do
+            if gcloud compute networks subnets list --project=$project_id --filter="name=$subnet_name AND region=($region)" --format="value(name)" | grep -q "^$subnet_name$"; then
+                echo "  - Used by service project: $project_id (Region: $region)" >> "$OUTPUT_FILE"
+            fi
+        done
     done
 }
 
