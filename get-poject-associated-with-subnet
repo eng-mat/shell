@@ -252,7 +252,6 @@ if ! grep -q "allowed for service project" "$OUTPUT_FILE"; then
 
 
 
-
 #!/bin/bash
 
 # Set your project ID
@@ -269,8 +268,8 @@ SUBNET_IDS=(
 get_service_projects_for_subnet() {
   local subnet_id=$1
 
-  # Create a filter to find logs related to the subnet
-  filter="resource.type=\"gce_instance\" AND logName=\"projects/${HOST_PROJECT_ID}/logs/compute.googleapis.com%2Fvpc_flows\" AND jsonPayload.connection.src_subnetwork_id=\"${subnet_id}\""
+  # Create a filter to find logs related to the subnet within the last 30 days
+  filter="resource.type=\"gce_instance\" AND logName=\"projects/${HOST_PROJECT_ID}/logs/compute.googleapis.com%2Fvpc_flows\" AND jsonPayload.connection.src_subnetwork_id=\"${subnet_id}\" AND timestamp >= \"$(date -u -d '30 days ago' '+%Y-%m-%dT%H:%M:%SZ')\""
 
   # Use gcloud logging read to get the project IDs
   project_ids=$(gcloud logging read "$filter" \
@@ -280,10 +279,14 @@ get_service_projects_for_subnet() {
     jq -r '.[].resource.labels.project_id' | sort | uniq)
 
   # Print the results
-  echo "Subnet ID $subnet_id is used by projects:"
-  for project_id in $project_ids; do
-    echo "- $project_id"
-  done
+  if [ -z "$project_ids" ]; then
+    echo "No service projects found using subnet ID $subnet_id."
+  else
+    echo "Subnet ID $subnet_id is used by projects:"
+    for project_id in $project_ids; do
+      echo "- $project_id"
+    done
+  fi
 }
 
 # Loop through each subnet and get the service projects
