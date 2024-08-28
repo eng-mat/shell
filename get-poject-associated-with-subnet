@@ -1,9 +1,1 @@
-If you're looking for all resources within GCP, we're talking about millions, and not all of these will have the necessary labels. Instead, we could focus on project-level labels/tags, which should align with those being used for some resources.
-
-From what I understand, each project is mapped to a specific application, and multiple projects may be associated with a single application due to different environments, such as dev, QA, pre-prod, and prod. Each of these environments could have various resources like GKE, Dataflow, etc., configured together to support a single application. Therefore, all these resources should be linked to a single GCP project, with no other application hosted within the same project.
-
-I believe we currently have around a thousand GCP projects; James can provide the exact figures.
-
-Regarding your request for GCP access, could you clarify the level of access you require? Are you asking for viewer access at the organizational level? Please be aware that Cloud Security approval is needed for this, so you'll need to obtain that first. Please create an AD Group for your team, request access to be added to that AD Group, and then request the necessary IAM roles from Cloud IAM Security. I will guide you further once you have approval from the Cloud Security Team.
-
-Please let me know if you still need access to all GCP resources or just the project labels and tags, which I believe James has already shared.
+.
