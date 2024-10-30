@@ -1,1 +1,44 @@
-.
+Project Definition of Done (DoD) Documentation
+
+GCP Cloud Engineering Team
+Purpose
+This document outlines the current and proposed "Definition of Done" (DoD) criteria for projects managed by the Cloud Engineering team.
+
+Current Process – Project Definition of Done
+Project Workflow Overview
+Project Request Submission
+The Application Team submits a new project request to the Enterprise Intakes Team.
+The Intakes Team reviews the project architecture and prepares an estimated cost for approval by the App Team management.
+Cloud Engineering Resource Allocation
+Upon management approval, the Cloud Engineering team is requested to allocate resources.
+Hours are allocated based on estimates, typically covering the project’s deployment duration, which may span several months. For example, an engineer may be allocated 5 hours weekly.
+Infrastructure Setup
+The assigned Cloud Engineer creates the landing zone (GCP project), unless an existing GCP project is available.
+Required network configurations and tags are set up.
+Support and Handoff
+The engineer provides ongoing support to the Application team, including guidance on project access, troubleshooting, and responding to ad-hoc requests.
+The engineer attends meetings as necessary and acts as the primary Cloud Engineering point of contact.
+Once the production environment is fully set up or the allocated ITPR hours have expired, the Cloud Engineer’s support concludes.
+Definition of Done
+The Cloud Engineer has completed the setup of the required environments.
+The Application team has received the necessary guidance.
+Ongoing support responsibilities end when the project reaches production or allocated hours are expended.
+
+Proposed Process – Project Definition of Done
+Project Workflow Overview
+Project Request Submission and Cloud Engineering Assignment
+Following request submission and architectural review by the Intakes Team, Cloud Engineering resources are assigned, and ITPR hours allocated.
+Landing Zone and Environment Setup
+The assigned Cloud Engineer creates a landing zone (GCP project) for all necessary environments (dev, qa, prod, etc.).
+Required infrastructure including network, and tags are delivered.
+Project Handoff and Support Transition
+Once setup is complete, the Cloud Engineer provides all necessary guidance to the Application team for access request processes.
+Definition of Done is met once the infrastructure is established, and the handoff guidance has been provided.
+Post-DoD Support
+After the project handoff, the Application team will engage the Operations Team for ongoing support, troubleshooting, or additional requirements.
+Definition of Done for Proposed Process
+The Cloud Engineer has set up the landing zone (GCP project) and all required environments.
+All requested infrastructure, subnets, tags etc. have been provided.
+Guidance has been provided to the Application team for the project IAM request process for configuration and deployments.
+Cloud Engineering involvement concludes upon handoff, with any further support routed to the Cloud Operations Team.
+
