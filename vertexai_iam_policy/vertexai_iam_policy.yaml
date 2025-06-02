@@ -1,0 +1,160 @@
+name: GCP IAM Role Automation
+
+# Configure when the workflow runs
+on:
+  push:
+    branches:
+      - main # Trigger on pushes to the 'main' branch
+  workflow_dispatch: # Allow manual triggering from the GitHub Actions UI
+    inputs:
+      gcp_project_id:
+        description: 'The GCP Project ID to assign roles in'
+        required: true
+        type: string
+      gcp_service_account_email:
+        description: 'Optional: Email of the GCP Service Account to assign roles to (e.g., my-sa@my-project.iam.gserviceaccount.com)'
+        required: false
+        type: string
+      individual_roles_sa:
+        description: 'Optional: Comma-separated individual IAM roles for the Service Account (e.g., roles/viewer,roles/storage.objectViewer)'
+        required: false
+        type: string
+        default: ''
+      bundled_roles_sa:
+        description: 'Optional: Select a predefined bundled role for the Service Account'
+        required: false
+        type: choice
+        options:
+          - '' # Empty option for no bundled role
+          - 'GenAI_ADMIN'
+          - 'GenAI_DEVELOPER'
+          - 'CUSTOM_BUNDLE_1' # Example: Add more as needed in the shell script
+        default: ''
+      ad_group_email:
+        description: 'Optional: Email of the Active Directory Group to assign roles to (e.g., ad-group@your-domain.com)'
+        required: false
+        type: string
+      individual_roles_ad:
+        description: 'Optional: Comma-separated individual IAM roles for the AD Group (e.g., roles/editor,roles/compute.networkAdmin)'
+        required: false
+        type: string
+        default: ''
+      bundled_roles_ad:
+        description: 'Optional: Select a predefined bundled role for the AD Group'
+        required: false
+        type: choice
+        options:
+          - '' # Empty option for no bundled role
+          - 'GenAI_ADMIN'
+          - 'GenAI_DEVELOPER'
+          - 'CUSTOM_BUNDLE_1' # Example: Add more as needed in the shell script
+        default: ''
+
+# Define environment variables that will be passed to the jobs.
+env:
+  # Updated WIF secrets based on your provided names
+  WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}      # Formerly WIF_POOL_ID
+  WIF_SERVICE_ACCOUNT: ${{ secrets.GIT_SERVICE_ACCOUNT }} # Formerly WIF_EXECUTOR_SA_EMAIL
+  PYTHON_VERSION: '3.9' # Specify Python version
+
+jobs:
+  dry-run:
+    name: Dry Run IAM Changes
+    runs-on: ubuntu-latest
+    environment:
+      name: production # IMPORTANT: Ensure this GitHub Environment exists and is configured
+    permissions:
+      contents: read    # To checkout the repository
+      id-token: write   # To authenticate to GCP via Workload Identity Federation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ github.event.inputs.gcp_project_id }} # This is mainly for gcloud's global config
+
+      # jq installation can be removed if not directly used by other steps,
+      # but gcloud might still output JSON that's useful for manual debugging if logs are inspected.
+      # For now, let's keep it as it's a small utility.
+      - name: Install jq (optional, for manual log inspection)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Execute Dry Run Python Script
+        id: dry_run_script
+        run: |
+          chmod +x ./vertexai_iam_policy.py
+          python ./vertexai_iam_policy.py \
+            --mode dry-run \
+            --project-id "${{ github.event.inputs.gcp_project_id }}" \
+            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
+            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
+            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
+            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
+            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
+            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}" > dry_run_output.txt 2>&1
+
+      - name: Upload Dry Run Output as Artifact
+        if: always() # Ensures artifact is uploaded even if the script fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-iam-policy-changes
+          path: dry_run_output.txt # This file contains stdout & stderr from the script
+          retention-days: 5
+
+  apply:
+    name: Apply IAM Changes
+    runs-on: ubuntu-latest
+    needs: dry-run # Ensures dry-run job (and thus the script) completed successfully before applying
+    if: github.event_name == 'workflow_dispatch' # Recommended: Only run apply on manual trigger for safety
+    environment:
+      name: production # IMPORTANT: Ensure this GitHub Environment exists and is configured with any protection rules
+    permissions:
+      contents: read    # To checkout the repository
+      id-token: write   # To authenticate to GCP via Workload Identity Federation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ github.event.inputs.gcp_project_id }} # For gcloud's global config
+
+      - name: Execute Apply Python Script
+        run: |
+          chmod +x ./vertexai_iam_policy.py
+          python ./vertexai_iam_policy.py \
+            --mode apply \
+            --project-id "${{ github.event.inputs.gcp_project_id }}" \
+            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
+            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
+            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
+            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
+            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
+            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}"

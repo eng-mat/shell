@@ -1,0 +1,352 @@
+name: Create Restricted Vertex AI API Key
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id: # Project ID provided by the user as input
+        description: 'GCP Project ID where the API key will be created and IAM roles granted.'
+        required: true
+        type: string
+      custom_service_account_email:
+        description: 'Optional: Custom service account email for Vertex AI IAM role granting. If empty, uses vertexai-sa@{PROJECT_ID}.iam.gserviceaccount.com.'
+        required: false
+        type: string
+      user_group_email:
+        description: 'Optional: Google Group email (e.g., your-ad-group@yourdomain.com) to grant API Keys Viewer role. Users in this group can retrieve the key themselves.'
+        required: false
+        type: string
+
+env:
+  VERTEXAI_SA_NAME: 'vertexai-sa'
+  API_TARGET_FLAGS: >- # Using YAML multiline string for readability, becomes a single line with spaces
+    --api-target=service=aiplatform.googleapis.com
+    --api-target=service=generativelanguage.googleapis.com
+  IAM_ROLE_VERTEX_AI_USER: 'roles/aiplatform.user' # Specific role for Vertex AI service account
+  IAM_ROLE_API_KEY_VIEWER: 'roles/serviceusage.apiKeysViewer' # Specific role to allow viewing API keys
+  # List of APIs to ensure are enabled
+  APIS_TO_ENABLE: "apikeys.googleapis.com aiplatform.googleapis.com generativelanguage.googleapis.com"
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set PROJECT_ID env var and Validate
+        run: |
+          if [ -z "${{ inputs.project_id }}" ]; then
+            echo "Error: Workflow input 'project_id' is empty. This is a required input."
+            exit 1
+          fi
+          echo "PROJECT_ID=${{ inputs.project_id }}" >> $GITHUB_ENV
+          echo "Project ID for Dry Run set to: ${{ inputs.project_id }}"
+
+      - name: Authenticate to Google Cloud (Dry Run)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ inputs.project_id }} # Use direct input
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GIT_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI (Dry Run)
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: Update gcloud components (Dry Run)
+        run: gcloud components update --quiet
+
+      - name: Configure gcloud default project (Dry Run)
+        run: gcloud config set project ${{ inputs.project_id }} # Use direct input
+
+      - name: Determine Vertex AI service account email (Dry Run)
+        id: set_sa_email_dry_run
+        # This step relies on env.PROJECT_ID being set by "Set PROJECT_ID env var and Validate"
+        run: |
+          if [ -n "${{ github.event.inputs.custom_service_account_email }}" ]; then
+            echo "SERVICE_ACCOUNT_EMAIL=${{ github.event.inputs.custom_service_account_email }}" >> $GITHUB_ENV
+            echo "Using custom service account for IAM (Dry Run): ${{ github.event.inputs.custom_service_account_email }}"
+          else
+            echo "SERVICE_ACCOUNT_EMAIL=${{ env.VERTEXAI_SA_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "Using default Vertex AI service account for IAM (Dry Run): ${{ env.VERTEXAI_SA_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+          fi
+
+      - name: Dry Run - Check if Vertex AI service account exists and would grant AI Platform User role
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          SA_EMAIL="${{ env.SERVICE_ACCOUNT_EMAIL }}"
+          IAM_ROLE="${{ env.IAM_ROLE_VERTEX_AI_USER }}"
+          DEFAULT_SA_EMAIL_CHECK="${{ env.VERTEXAI_SA_NAME }}@${{ env.PROJECT_ID_FOR_SHELL }}.iam.gserviceaccount.com"
+
+          echo "--- DRY RUN: IAM Role for Vertex AI Service Account ---"
+          echo "Attempting to describe service account: $SA_EMAIL in project ${{ env.PROJECT_ID_FOR_SHELL }}"
+
+          SA_SHOULD_PROCEED_FOR_DRY_RUN=false
+          if gcloud iam service-accounts describe "$SA_EMAIL" --project="${{ env.PROJECT_ID_FOR_SHELL }}" >/dev/null 2>&1; then
+            echo "Service account '$SA_EMAIL' exists."
+            SA_SHOULD_PROCEED_FOR_DRY_RUN=true
+          else
+            echo "Service account '$SA_EMAIL' does NOT exist (or access denied based on describe)."
+            if [ "$SA_EMAIL" == "$DEFAULT_SA_EMAIL_CHECK" ]; then
+              echo "This is the default service account. In an 'apply' run, an attempt would be made to create it if it doesn't exist."
+              echo "For this dry run, simulating its existence for the IAM role grant dry run."
+              SA_SHOULD_PROCEED_FOR_DRY_RUN=true
+            else
+              echo "This is a custom service account. It must exist beforehand. Skipping IAM role dry run for this SA."
+            fi
+          fi
+
+          if [ "$SA_SHOULD_PROCEED_FOR_DRY_RUN" = true ]; then
+            echo "Would attempt to grant IAM role '$IAM_ROLE' to '$SA_EMAIL'. Command that would run:"
+            echo "gcloud projects add-iam-policy-binding \"${{ env.PROJECT_ID_FOR_SHELL }}\" \\"
+            echo "  --member=\"serviceAccount:$SA_EMAIL\" \\"
+            echo "  --role=\"$IAM_ROLE\" \\"
+            echo "  --condition=None"
+            echo "Dry run for IAM role '$IAM_ROLE' to '$SA_EMAIL' completed by displaying the command."
+          fi
+          echo "--------------------------------------------------------"
+
+      - name: Dry Run - Would grant API Keys Viewer role to specified user group (if provided)
+        if: github.event.inputs.user_group_email != ''
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          USER_GROUP_EMAIL="${{ github.event.inputs.user_group_email }}"
+          API_KEY_VIEWER_ROLE="${{ env.IAM_ROLE_API_KEY_VIEWER }}"
+
+          echo "--- DRY RUN: IAM Role for User Group ---"
+          echo "Would attempt to grant IAM role '$API_KEY_VIEWER_ROLE' to group '$USER_GROUP_EMAIL' in project ${{ env.PROJECT_ID_FOR_SHELL }}. Command that would run:"
+          echo "gcloud projects add-iam-policy-binding \"${{ env.PROJECT_ID_FOR_SHELL }}\" \\"
+          echo "  --member=\"group:$USER_GROUP_EMAIL\" \\"
+          echo "  --role=\"$API_KEY_VIEWER_ROLE\" \\"
+          echo "  --condition=None"
+          echo "Dry run for IAM role '$API_KEY_VIEWER_ROLE' to '$USER_GROUP_EMAIL' completed by displaying the command."
+          echo "----------------------------------------"
+
+      - name: Dry Run - Would enable necessary APIs
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          echo "--- DRY RUN: Enable APIs ---"
+          echo "The following APIs would be enabled if not already active in project '${{ env.PROJECT_ID_FOR_SHELL }}':"
+          echo "${{ env.APIS_TO_ENABLE }}"
+          echo "Command that would run: gcloud services enable ${{ env.APIS_TO_ENABLE }} --project=\\\"${{ env.PROJECT_ID_FOR_SHELL }}\\\""
+          echo "----------------------------"
+
+      - name: Dry Run - Would create restricted API key
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          API_KEY_NAME="vertex-ai-restricted-key-${{ github.run_id }}"
+          CIDR_RANGE="${{ vars.CIDR_RANGE }}"
+          API_KEY_TARGET_FLAGS_CONFIG="${{ env.API_TARGET_FLAGS }}"
+
+          echo "--- DRY RUN: API Key Creation ---"
+          echo "The following command would be executed to create the API key:"
+          echo "gcloud services api-keys create \\"
+          echo "  --project=\"${{ env.PROJECT_ID_FOR_SHELL }}\" \\"
+          echo "  --display-name=\"$API_KEY_NAME\" \\"
+          echo "  --allowed-ips=\"$CIDR_RANGE\" \\"
+          echo "  $API_KEY_TARGET_FLAGS_CONFIG \\"
+          echo "  --format=\"json\""
+          echo "No actual API key will be created during this dry run."
+          echo "---------------------------------"
+
+  apply:
+    runs-on: ubuntu-latest
+    environment: production
+    needs: dry-run # Depends on the dry-run job
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set PROJECT_ID env var and Validate
+        run: |
+          if [ -z "${{ inputs.project_id }}" ]; then
+            echo "Error: Workflow input 'project_id' is empty. This is a required input."
+            exit 1
+          fi
+          echo "PROJECT_ID=${{ inputs.project_id }}" >> $GITHUB_ENV
+          echo "Project ID for Apply set to: ${{ inputs.project_id }}"
+
+      - name: Authenticate to Google Cloud (Apply Run)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ inputs.project_id }} # Use direct input
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GIT_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI (Apply Run)
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: Update gcloud components (Apply Run)
+        run: gcloud components update --quiet
+
+      - name: Configure gcloud default project (Apply Run)
+        run: gcloud config set project ${{ inputs.project_id }} # Use direct input
+
+      - name: Determine Vertex AI service account email (Apply Run)
+        id: set_sa_email_apply_run
+        # This step relies on env.PROJECT_ID being set by "Set PROJECT_ID env var and Validate"
+        run: |
+          if [ -n "${{ github.event.inputs.custom_service_account_email }}" ]; then
+            echo "SERVICE_ACCOUNT_EMAIL=${{ github.event.inputs.custom_service_account_email }}" >> $GITHUB_ENV
+            echo "Using custom service account for IAM (Apply Run): ${{ github.event.inputs.custom_service_account_email }}"
+          else
+            echo "SERVICE_ACCOUNT_EMAIL=${{ env.VERTEXAI_SA_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "Using default Vertex AI service account for IAM (Apply Run): ${{ env.VERTEXAI_SA_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+          fi
+
+      - name: Apply - Ensure Vertex AI SA exists and grant AI Platform User role
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          SA_EMAIL_TO_PROCESS="${{ env.SERVICE_ACCOUNT_EMAIL }}"
+          IAM_ROLE_TO_GRANT="${{ env.IAM_ROLE_VERTEX_AI_USER }}"
+          DEFAULT_SA_EMAIL_CONSTRUCTED="${{ env.VERTEXAI_SA_NAME }}@${{ env.PROJECT_ID_FOR_SHELL }}.iam.gserviceaccount.com"
+          SA_ID_FOR_CREATION="${{ env.VERTEXAI_SA_NAME }}"
+          SA_DISPLAY_NAME_FOR_CREATION="Vertex AI Service Account (created by GHA workflow)"
+
+          echo "--- APPLY RUN: IAM Role for Vertex AI Service Account ---"
+          echo "Processing Service Account: $SA_EMAIL_TO_PROCESS in project ${{ env.PROJECT_ID_FOR_SHELL }}"
+
+          SA_READY_FOR_IAM=false
+
+          if gcloud iam service-accounts describe "$SA_EMAIL_TO_PROCESS" --project="${{ env.PROJECT_ID_FOR_SHELL }}" >/dev/null 2>&1; then
+            echo "Service account '$SA_EMAIL_TO_PROCESS' already exists."
+            SA_READY_FOR_IAM=true
+          else
+            echo "Service account '$SA_EMAIL_TO_PROCESS' not found."
+            if [ "$SA_EMAIL_TO_PROCESS" == "$DEFAULT_SA_EMAIL_CONSTRUCTED" ]; then
+              echo "This is the default service account. Attempting to create it as '$SA_ID_FOR_CREATION'..."
+              if gcloud iam service-accounts create "$SA_ID_FOR_CREATION" \
+                --project="${{ env.PROJECT_ID_FOR_SHELL }}" \
+                --display-name="$SA_DISPLAY_NAME_FOR_CREATION"; then
+                echo "Service account '$SA_EMAIL_TO_PROCESS' created successfully."
+                SA_READY_FOR_IAM=true
+              else
+                echo "Initial creation attempt for '$SA_ID_FOR_CREATION' failed or reported an issue. Re-checking existence..."
+                if gcloud iam service-accounts describe "$SA_EMAIL_TO_PROCESS" --project="${{ env.PROJECT_ID_FOR_SHELL }}" >/dev/null 2>&1; then
+                  echo "Service account '$SA_EMAIL_TO_PROCESS' was found after the creation attempt."
+                  SA_READY_FOR_IAM=true
+                else
+                  echo "ERROR: Failed to create or confirm existence of service account '$SA_ID_FOR_CREATION' after creation attempt. Check gcloud logs above for details."
+                fi
+              fi
+            else
+              echo "This is a custom service account ('$SA_EMAIL_TO_PROCESS') and it was not found. It will not be created by this workflow."
+            fi
+          fi
+
+          if [ "$SA_READY_FOR_IAM" = true ]; then
+            echo "Granting IAM role '$IAM_ROLE_TO_GRANT' to '$SA_EMAIL_TO_PROCESS'..."
+            if gcloud projects add-iam-policy-binding "${{ env.PROJECT_ID_FOR_SHELL }}" \
+              --member="serviceAccount:$SA_EMAIL_TO_PROCESS" \
+              --role="$IAM_ROLE_TO_GRANT" \
+              --condition=None; then
+              echo "IAM role '$IAM_ROLE_TO_GRANT' successfully granted to '$SA_EMAIL_TO_PROCESS'."
+            else
+              echo "ERROR: Failed to grant IAM role '$IAM_ROLE_TO_GRANT' to '$SA_EMAIL_TO_PROCESS'. Check gcloud logs above."
+            fi
+          else
+            echo "Skipping IAM role granting for Vertex AI SA '$SA_EMAIL_TO_PROCESS' as it does not exist and/or could not be created/confirmed."
+          fi
+          echo "--------------------------------------------------------"
+
+      - name: Apply - Grant API Keys Viewer role to specified user group (if provided)
+        if: github.event.inputs.user_group_email != ''
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          USER_GROUP_EMAIL="${{ github.event.inputs.user_group_email }}"
+          API_KEY_VIEWER_ROLE="${{ env.IAM_ROLE_API_KEY_VIEWER }}"
+
+          echo "--- APPLY RUN: IAM Role for User Group ---"
+          echo "Granting IAM role '$API_KEY_VIEWER_ROLE' to group '$USER_GROUP_EMAIL' in project ${{ env.PROJECT_ID_FOR_SHELL }}..."
+          if gcloud projects add-iam-policy-binding "${{ env.PROJECT_ID_FOR_SHELL }}" \
+            --member="group:$USER_GROUP_EMAIL" \
+            --role="$API_KEY_VIEWER_ROLE" \
+            --condition=None; then
+            echo "IAM role '$API_KEY_VIEWER_ROLE' successfully granted to '$USER_GROUP_EMAIL'."
+          else
+            echo "ERROR: Failed to grant IAM role '$API_KEY_VIEWER_ROLE' to group '$USER_GROUP_EMAIL'. Check gcloud logs."
+          fi
+          echo "----------------------------------------"
+
+      - name: Apply - Enable necessary APIs
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          echo "--- APPLY RUN: Enabling APIs ---"
+          echo "Attempting to enable the following APIs in project '${{ env.PROJECT_ID_FOR_SHELL }}':"
+          echo "${{ env.APIS_TO_ENABLE }}"
+          if gcloud services enable ${{ env.APIS_TO_ENABLE }} --project="${{ env.PROJECT_ID_FOR_SHELL }}"; then
+            echo "Successfully enabled (or ensured they were already enabled): ${{ env.APIS_TO_ENABLE }}"
+          else
+            echo "ERROR: Failed to enable one or more APIs. Check gcloud logs above. The API key creation might fail."
+            # Consider failing the job: exit 1
+          fi
+          echo "--------------------------------"
+
+      - name: Apply - Create restricted API key
+        id: create_key_apply_run
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          API_KEY_NAME="vertex-ai-restricted-key-${{ github.run_id }}"
+          CIDR_RANGE="${{ vars.CIDR_RANGE }}"
+          API_KEY_TARGET_FLAGS_CONFIG="${{ env.API_TARGET_FLAGS }}"
+
+          echo "--- APPLY RUN: API Key Creation ---"
+          echo "Creating API key '$API_KEY_NAME' in project '${{ env.PROJECT_ID_FOR_SHELL }}' with specified restrictions..."
+          
+          gcloud services api-keys create \
+            --project="${{ env.PROJECT_ID_FOR_SHELL }}" \
+            --display-name="$API_KEY_NAME" \
+            --allowed-ips="$CIDR_RANGE" \
+            $API_KEY_TARGET_FLAGS_CONFIG \
+            --format="json"
+
+          echo "API key '$API_KEY_NAME' creation command executed. Check gcloud output above for status."
+          echo "It will NOT be displayed in logs for security if successful."
+          echo "---------------------------------"
+
+      - name: Provide key retrieval instructions
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }} # Set by previous step
+        run: |
+          echo "## API Key Retrieval Instructions" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "A Vertex AI API Key creation process was initiated with the following details:" >> $GITHUB_STEP_SUMMARY
+          echo "- **GCP Project ID**: \`${{ env.PROJECT_ID_FOR_SHELL }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Key Display Name**: \`vertex-ai-restricted-key-${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "If created successfully, users with the \`API Keys Viewer\` role (\`roles/serviceusage.apiKeysViewer\`) in the GCP Project can retrieve the key string using the \`gcloud\` CLI:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# 1. Authenticate to gcloud (if not already authenticated)" >> $GITHUB_STEP_SUMMARY
+          echo "gcloud auth login" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 2. Set your GCP project (if not already configured)" >> $GITHUB_STEP_SUMMARY
+          echo "gcloud config set project ${{ env.PROJECT_ID_FOR_SHELL }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 3. Find the API Key's resource name using its display name" >> $GITHUB_STEP_SUMMARY
+          echo "API_KEY_RESOURCE_NAME=\$(gcloud services api-keys list \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --project=\"${{ env.PROJECT_ID_FOR_SHELL }}\" \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --filter=\"displayName=vertex-ai-restricted-key-${{ github.run_id }}\" \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --format=\"value(name)\")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 4. Retrieve the actual key string" >> $GITHUB_STEP_SUMMARY
+          echo "API_KEY_VALUE=\$(gcloud services api-keys get-key-string \"\$API_KEY_RESOURCE_NAME\" \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --project=\"${{ env.PROJECT_ID_FOR_SHELL }}\" \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --format=\"value(keyString)\")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "echo \"Your Vertex AI API Key is: \$API_KEY_VALUE\"" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

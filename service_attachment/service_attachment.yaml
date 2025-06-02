@@ -1,0 +1,238 @@
+name: Create GCP Service Attachment (Dry Run & Apply)
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'GCP Project ID where the service attachment will be created.'
+        required: true
+        type: string
+      forwarding_rule_name:
+        description: 'Name of the producer forwarding rule for the service attachment.'
+        required: true
+        type: string
+      psc_subnet_path:
+        description: 'Full path of the NAT subnet(s) for PSC (e.g., projects/HOST_PROJECT/regions/REGION/subnetworks/PSC_SUBNET_NAME)'
+        required: true
+        type: string
+      region:
+        description: 'Region where the service attachment will be created. (e.g., us-east2)'
+        required: true
+        type: string
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    environment: production # Specify your environment if applicable
+    permissions:
+      id-token: write    # Required for Workload Identity Federation
+      contents: read     # Required to checkout the repository
+    outputs:
+      service_attachment_name: ${{ steps.set_vars.outputs.SERVICE_ATTACHMENT_NAME_OUT }}
+      project_id_out: ${{ inputs.project_id }}
+      forwarding_rule_name_out: ${{ inputs.forwarding_rule_name }}
+      psc_subnet_path_out: ${{ inputs.psc_subnet_path }}
+      region_out: ${{ inputs.region }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Input Variables, Validate, and Define Service Attachment Name (Dry Run)
+        id: set_vars
+        run: |
+          if [ -z "${{ inputs.project_id }}" ]; then
+            echo "Error: Workflow input 'project_id' is empty. This is a required input."
+            exit 1
+          fi
+          if [ -z "${{ inputs.forwarding_rule_name }}" ]; then
+            echo "Error: Workflow input 'forwarding_rule_name' is empty. This is a required input."
+            exit 1
+          fi
+          if [ -z "${{ inputs.psc_subnet_path }}" ]; then
+            echo "Error: Workflow input 'psc_subnet_path' is empty. This is a required input."
+            exit 1
+          fi
+          if [ -z "${{ inputs.region }}" ]; then
+            echo "Error: Workflow input 'region' is empty. This is a required input."
+            exit 1
+          fi
+
+          SERVICE_ATTACHMENT_NAME="${{ inputs.project_id }}-svcatt"
+          echo "SERVICE_ATTACHMENT_NAME_ENV=${SERVICE_ATTACHMENT_NAME}" >> $GITHUB_ENV
+          echo "SERVICE_ATTACHMENT_NAME_OUT=${SERVICE_ATTACHMENT_NAME}" >> $GITHUB_OUTPUT
+
+          echo "Project ID: ${{ inputs.project_id }}"
+          echo "Forwarding Rule Name: ${{ inputs.forwarding_rule_name }}"
+          echo "PSC Subnet Path: ${{ inputs.psc_subnet_path }}"
+          echo "Region: ${{ inputs.region }}"
+          echo "Service Attachment Name (derived): ${SERVICE_ATTACHMENT_NAME}"
+
+      - name: Authenticate to Google Cloud (Dry Run)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ inputs.project_id }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }} # Replace with your WIF provider
+          service_account: ${{ secrets.GIT_SERVICE_ACCOUNT }}     # Replace with your Service Account email
+
+      - name: Set up gcloud CLI (Dry Run)
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: Update gcloud components (Dry Run)
+        run: gcloud components update --quiet
+
+      - name: Configure gcloud default project (Dry Run)
+        run: gcloud config set project ${{ inputs.project_id }}
+
+      - name: Dry Run - Check for Existing Service Attachment and Simulate Creation
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ inputs.project_id }}
+          FORWARDING_RULE_NAME_FOR_SHELL: ${{ inputs.forwarding_rule_name }}
+          PSC_SUBNET_PATH_FOR_SHELL: ${{ inputs.psc_subnet_path }}
+          REGION_FOR_SHELL: ${{ inputs.region }}
+          SERVICE_ATTACHMENT_NAME_FOR_SHELL: ${{ env.SERVICE_ATTACHMENT_NAME_ENV }}
+        run: |
+          echo "--- DRY RUN: Service Attachment Creation ---"
+          echo "Service Attachment Name: '$SERVICE_ATTACHMENT_NAME_FOR_SHELL'"
+          echo "Project ID: '$PROJECT_ID_FOR_SHELL'"
+          echo "Region: '$REGION_FOR_SHELL'"
+          echo "Producer Forwarding Rule: '$FORWARDING_RULE_NAME_FOR_SHELL'"
+          echo "NAT Subnet(s): '$PSC_SUBNET_PATH_FOR_SHELL'"
+          echo ""
+
+          echo "Attempting to describe service attachment '$SERVICE_ATTACHMENT_NAME_FOR_SHELL' in region '$REGION_FOR_SHELL' and project '$PROJECT_ID_FOR_SHELL' to check if it already exists..."
+          GCLOUD_STDERR_OUTPUT_FILE=$(mktemp)
+          GCLOUD_DESCRIBE_EXIT_CODE=0
+
+          if gcloud compute service-attachments describe "$SERVICE_ATTACHMENT_NAME_FOR_SHELL" \
+            --region="$REGION_FOR_SHELL" \
+            --project="$PROJECT_ID_FOR_SHELL" \
+            --format="value(name)" 2>"$GCLOUD_STDERR_OUTPUT_FILE"; then
+            echo "WARNING: Service Attachment '$SERVICE_ATTACHMENT_NAME_FOR_SHELL' already exists in project '$PROJECT_ID_FOR_SHELL' and region '$REGION_FOR_SHELL'."
+            echo "The 'apply' job will attempt to create it, which will likely result in an error."
+          else
+            GCLOUD_DESCRIBE_EXIT_CODE=$?
+            DESCRIBE_STDERR=$(cat "$GCLOUD_STDERR_OUTPUT_FILE")
+            if [[ "$DESCRIBE_STDERR" == *"NOT_FOUND"* ]]; then
+              echo "Service Attachment '$SERVICE_ATTACHMENT_NAME_FOR_SHELL' does not currently exist. The 'apply' job should be able to create it."
+            else
+              echo "Failed to retrieve details for Service Attachment '$SERVICE_ATTACHMENT_NAME_FOR_SHELL'."
+              echo "gcloud 'describe' command exited with code: $GCLOUD_DESCRIBE_EXIT_CODE."
+              echo "gcloud standard error output:"
+              cat "$GCLOUD_STDERR_OUTPUT_FILE"
+              echo ""
+              echo "This could be due to various reasons, including insufficient permissions (e.g., missing 'compute.serviceAttachments.get')."
+              echo "The 'apply' job will still attempt the creation."
+            fi
+          fi
+          rm -f "$GCLOUD_STDERR_OUTPUT_FILE"
+          echo ""
+
+          echo "Command that WOULD BE EXECUTED in the apply run:"
+          echo "gcloud compute service-attachments create \"$SERVICE_ATTACHMENT_NAME_FOR_SHELL\" \\"
+          echo "  --producer-forwarding-rule=\"$FORWARDING_RULE_NAME_FOR_SHELL\" \\"
+          echo "  --nat-subnets=\"$PSC_SUBNET_PATH_FOR_SHELL\" \\"
+          echo "  --region=\"$REGION_FOR_SHELL\" \\"
+          echo "  --project=\"$PROJECT_ID_FOR_SHELL\""
+          echo "----------------------------------"
+
+          if [ $GCLOUD_DESCRIBE_EXIT_CODE -ne 0 ] && ! [[ "$(cat "$GCLOUD_STDERR_OUTPUT_FILE" 2>/dev/null)" == *"NOT_FOUND"* ]]; then
+             # Allow progression if not found, but error on other describe issues that aren't "NOT_FOUND"
+             # Exit code 2 for gcloud usually means command syntax or auth issues.
+            if [ $GCLOUD_DESCRIBE_EXIT_CODE -eq 2 ]; then
+                echo "CRITICAL ERROR: The 'gcloud compute service-attachments describe' command failed with exit code 2."
+                echo "This typically indicates an issue with the gcloud command itself, its arguments, or its environment."
+                exit 2
+            fi
+          fi
+
+  apply:
+    runs-on: ubuntu-latest
+    environment: production # Specify your environment if applicable
+    needs: dry-run
+    permissions:
+      id-token: write    # Required for Workload Identity Federation
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Input Variables from Dry Run (Apply)
+        id: set_vars_apply
+        run: |
+          echo "PROJECT_ID_APPLY=${{ needs.dry-run.outputs.project_id_out }}" >> $GITHUB_ENV
+          echo "FORWARDING_RULE_NAME_APPLY=${{ needs.dry-run.outputs.forwarding_rule_name_out }}" >> $GITHUB_ENV
+          echo "PSC_SUBNET_PATH_APPLY=${{ needs.dry-run.outputs.psc_subnet_path_out }}" >> $GITHUB_ENV
+          echo "REGION_APPLY=${{ needs.dry-run.outputs.region_out }}" >> $GITHUB_ENV
+          echo "SERVICE_ATTACHMENT_NAME_APPLY=${{ needs.dry-run.outputs.service_attachment_name }}" >> $GITHUB_ENV
+
+          echo "Applying with the following parameters from dry-run:"
+          echo "Project ID: ${{ needs.dry-run.outputs.project_id_out }}"
+          echo "Forwarding Rule Name: ${{ needs.dry-run.outputs.forwarding_rule_name_out }}"
+          echo "PSC Subnet Path: ${{ needs.dry-run.outputs.psc_subnet_path_out }}"
+          echo "Region: ${{ needs.dry-run.outputs.region_out }}"
+          echo "Service Attachment Name: ${{ needs.dry-run.outputs.service_attachment_name }}"
+
+      - name: Authenticate to Google Cloud (Apply)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ env.PROJECT_ID_APPLY }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }} # Replace with your WIF provider
+          service_account: ${{ secrets.GIT_SERVICE_ACCOUNT }}     # Replace with your Service Account email
+
+      - name: Set up gcloud CLI (Apply)
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: Update gcloud components (Apply)
+        run: gcloud components update --quiet
+
+      - name: Configure gcloud default project (Apply)
+        run: gcloud config set project ${{ env.PROJECT_ID_APPLY }}
+
+      - name: Apply - Create Service Attachment
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID_APPLY }}
+          FORWARDING_RULE_NAME_FOR_SHELL: ${{ env.FORWARDING_RULE_NAME_APPLY }}
+          PSC_SUBNET_PATH_FOR_SHELL: ${{ env.PSC_SUBNET_PATH_APPLY }}
+          REGION_FOR_SHELL: ${{ env.REGION_APPLY }}
+          SERVICE_ATTACHMENT_NAME_FOR_SHELL: ${{ env.SERVICE_ATTACHMENT_NAME_APPLY }}
+        run: |
+          echo "--- APPLY: Service Attachment Creation ---"
+          echo "Attempting to create service attachment '$SERVICE_ATTACHMENT_NAME_FOR_SHELL' in project '$PROJECT_ID_FOR_SHELL' and region '$REGION_FOR_SHELL'..."
+          echo "Producer Forwarding Rule: '$FORWARDING_RULE_NAME_FOR_SHELL'"
+          echo "NAT Subnet(s): '$PSC_SUBNET_PATH_FOR_SHELL'"
+          echo ""
+
+          echo "Executing: gcloud compute service-attachments create \"$SERVICE_ATTACHMENT_NAME_FOR_SHELL\" \
+            --producer-forwarding-rule=\"$FORWARDING_RULE_NAME_FOR_SHELL\" \
+            --nat-subnets=\"$PSC_SUBNET_PATH_FOR_SHELL\" \
+            --region=\"$REGION_FOR_SHELL\" \
+            --project=\"$PROJECT_ID_FOR_SHELL\""
+
+          GCLOUD_CREATE_STDERR_OUTPUT_FILE=$(mktemp)
+          if gcloud compute service-attachments create "$SERVICE_ATTACHMENT_NAME_FOR_SHELL" \
+            --producer-forwarding-rule="$FORWARDING_RULE_NAME_FOR_SHELL" \
+            --nat-subnets="$PSC_SUBNET_PATH_FOR_SHELL" \
+            --region="$REGION_FOR_SHELL" \
+            --project="$PROJECT_ID_FOR_SHELL" 2>"$GCLOUD_CREATE_STDERR_OUTPUT_FILE"; then
+            echo "Service Attachment '$SERVICE_ATTACHMENT_NAME_FOR_SHELL' created successfully in project '$PROJECT_ID_FOR_SHELL' and region '$REGION_FOR_SHELL'."
+          else
+            CREATE_EXIT_CODE=$?
+            echo "ERROR: The 'gcloud compute service-attachments create' command failed. Details below."
+            echo "Command exit code: $CREATE_EXIT_CODE"
+            echo "=====BEGIN GCLOUD STDERR (create attempt)====="
+            cat "$GCLOUD_CREATE_STDERR_OUTPUT_FILE"
+            echo "=====END GCLOUD STDERR (create attempt)====="
+            echo ""
+            echo "Failed to create Service Attachment '$SERVICE_ATTACHMENT_NAME_FOR_SHELL'."
+            echo "This could be due to:"
+            echo "- The service attachment already exists."
+            echo "- Incorrect parameters (Project ID, Forwarding Rule, NAT Subnet(s), Region)."
+            echo "- Insufficient IAM permissions (ensure the service account has 'compute.serviceAttachments.create' and other necessary permissions)."
+            echo "- The specified resources (forwarding rule, subnet) do not exist or are misconfigured."
+            echo "Please check the gcloud error messages above for specific details."
+            rm -f "$GCLOUD_CREATE_STDERR_OUTPUT_FILE"
+            exit 1
+          fi
+          rm -f "$GCLOUD_CREATE_STDERR_OUTPUT_FILE"
+          echo "----------------------------------"
