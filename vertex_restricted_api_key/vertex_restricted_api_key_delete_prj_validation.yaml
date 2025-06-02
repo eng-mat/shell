@@ -1,0 +1,223 @@
+name: Delete GCP API Key (Dry Run & Apply)
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'GCP Project ID where the API key resides. Must follow naming convention (e.g., prefix-poc-suffix).'
+        required: true
+        type: string
+      key_id:
+        description: 'The ID of the API key to delete (e.g., AIzadSy...). This will be masked in logs.'
+        required: true
+        type: string
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    environment: production 
+    permissions:
+      id-token: write   
+      contents: read    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Project ID & Key ID, Set Env Vars, and Mask Key ID (Dry Run)
+        run: |
+          PROJECT_ID_INPUT="${{ inputs.project_id }}"
+          KEY_ID_INPUT="${{ inputs.key_id }}"
+
+          if [ -z "$PROJECT_ID_INPUT" ]; then
+            echo "Error: Workflow input 'project_id' is empty. This is a required input."
+            exit 1
+          fi
+          if [ -z "$KEY_ID_INPUT" ]; then
+            echo "Error: Workflow input 'key_id' is empty. This is a required input."
+            exit 1
+          fi
+
+          # Project ID Pattern Validation
+          ALLOWED_PATTERNS_FOR_SECOND_SEGMENT="poc|ppoc"
+          TARGET_REGEX_PATTERN="^[a-z0-9][a-z0-9-]*-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9][a-z0-9-.]*[a-z0-9]$"
+          echo "Validating Project ID '$PROJECT_ID_INPUT' using pattern for second segment: $ALLOWED_PATTERNS_FOR_SECOND_SEGMENT"
+          echo "Full regex being applied: $TARGET_REGEX_PATTERN"
+          if ! [[ "$PROJECT_ID_INPUT" =~ $TARGET_REGEX_PATTERN ]]; then
+            echo "Error: Project ID '$PROJECT_ID_INPUT' does not meet the required naming convention."
+            echo "The Project ID must be hyphen-separated, start with a letter, and the second segment must be one of: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'."
+            exit 1
+          fi
+          echo "Project ID '$PROJECT_ID_INPUT' format validation successful."
+          
+          # Mask the Key ID so it doesn't appear raw in logs
+          echo "::add-mask::$KEY_ID_INPUT"
+          
+          echo "PROJECT_ID=$PROJECT_ID_INPUT" >> $GITHUB_ENV
+          echo "KEY_ID=$KEY_ID_INPUT" >> $GITHUB_ENV 
+          
+          echo "Project ID (Dry Run): $PROJECT_ID_INPUT"
+          echo "API Key ID processing for dry run initiated. The Key ID has been masked and should not appear in logs."
+
+      - name: Authenticate to Google Cloud (Dry Run)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ inputs.project_id }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GIT_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI (Dry Run)
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: Update gcloud components (Dry Run)
+        run: gcloud components update --quiet
+
+      - name: Configure gcloud default project (Dry Run)
+        run: gcloud config set project ${{ inputs.project_id }}
+
+      - name: Dry Run - Check API Key and Simulate Deletion
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }}
+          KEY_ID_FOR_SHELL: ${{ env.KEY_ID }} 
+        run: |
+          echo "--- DRY RUN: API Key Deletion ---"
+          echo "Attempting to describe the specified API Key ID (masked: $KEY_ID_FOR_SHELL) in project '$PROJECT_ID_FOR_SHELL' to check existence..."
+          
+          GCLOUD_STDERR_OUTPUT_FILE=$(mktemp)
+          GCLOUD_DESCRIBE_EXIT_CODE=0 
+
+          if KEY_DISPLAY_NAME=$(gcloud services api-keys describe "$KEY_ID_FOR_SHELL" --project="$PROJECT_ID_FOR_SHELL" --format="value(displayName)" 2>"$GCLOUD_STDERR_OUTPUT_FILE"); then
+            echo "API Key (ID: $KEY_ID_FOR_SHELL) found with DisplayName: '$KEY_DISPLAY_NAME'."
+            echo "This key WOULD BE DELETED in an apply run."
+          else
+            GCLOUD_DESCRIBE_EXIT_CODE=$? 
+            echo "Failed to retrieve details for the specified API Key ID (masked: $KEY_ID_FOR_SHELL) in project '$PROJECT_ID_FOR_SHELL'."
+            echo "gcloud 'describe' command exited with code: $GCLOUD_DESCRIBE_EXIT_CODE."
+            echo "gcloud standard error output:"
+            cat "$GCLOUD_STDERR_OUTPUT_FILE"
+            echo "" 
+            echo "This failure could be due to several reasons:"
+            echo "- The Key ID ('$KEY_ID_FOR_SHELL') or Project ID ('$PROJECT_ID_FOR_SHELL') is incorrect."
+            # ... (rest of detailed error explanations) ...
+            echo "- The key has already been deleted."
+            echo "- Insufficient IAM permissions (e.g., the service account is missing 'serviceusage.apiKeys.get' on the project)."
+            echo "- The API Keys API (apikeys.googleapis.com) might not be enabled in project '$PROJECT_ID_FOR_SHELL'."
+            echo "- A general gcloud CLI or configuration issue (especially if exit code is 2)."
+            echo "The delete operation would still be attempted in an apply run (and may fail if issues persist)."
+          fi
+          rm -f "$GCLOUD_STDERR_OUTPUT_FILE" 
+
+          echo ""
+          echo "Command that would be executed in the apply run (Key ID will be masked if logged by the runner):"
+          echo "gcloud services api-keys delete \"$KEY_ID_FOR_SHELL\" --project=\"$PROJECT_ID_FOR_SHELL\""
+          echo "----------------------------------"
+
+          if [ $GCLOUD_DESCRIBE_EXIT_CODE -eq 2 ]; then
+            echo "CRITICAL ERROR: The 'gcloud services api-keys describe' command failed with exit code 2."
+            # ... (rest of critical error explanation) ...
+            echo "This typically indicates an issue with the gcloud command itself, its arguments, or its environment."
+            echo "Please review the gcloud error output above and check the provided Project ID and Key ID inputs."
+            exit 2 
+          fi
+
+  apply:
+    runs-on: ubuntu-latest
+    environment: production 
+    needs: dry-run        
+    permissions:
+      id-token: write  
+      contents: read    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Project ID & Key ID, Set Env Vars, and Mask Key ID (Apply)
+        run: |
+          PROJECT_ID_INPUT="${{ inputs.project_id }}"
+          KEY_ID_INPUT="${{ inputs.key_id }}"
+
+          if [ -z "$PROJECT_ID_INPUT" ]; then
+            echo "Error: Workflow input 'project_id' is empty. This is a required input."
+            exit 1
+          fi
+          if [ -z "$KEY_ID_INPUT" ]; then
+            echo "Error: Workflow input 'key_id' is empty. This is a required input."
+            exit 1
+          fi
+          
+          # Project ID Pattern Validation
+          ALLOWED_PATTERNS_FOR_SECOND_SEGMENT="poc|ppoc"
+          TARGET_REGEX_PATTERN="^[a-z0-9][a-z0-9-]*-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9][a-z0-9-.]*[a-z0-9]$"
+          # Not re-printing regex details in apply job to reduce log verbosity, already shown in dry-run.
+          if ! [[ "$PROJECT_ID_INPUT" =~ $TARGET_REGEX_PATTERN ]]; then
+            echo "Error: Project ID '$PROJECT_ID_INPUT' does not meet the required naming convention for apply job."
+            exit 1
+          fi
+          echo "Project ID '$PROJECT_ID_INPUT' format validation successful for apply job."
+
+          echo "::add-mask::$KEY_ID_INPUT"
+
+          echo "PROJECT_ID=$PROJECT_ID_INPUT" >> $GITHUB_ENV
+          echo "KEY_ID=$KEY_ID_INPUT" >> $GITHUB_ENV
+
+          echo "Project ID (Apply): $PROJECT_ID_INPUT"
+          echo "API Key ID processing for apply initiated. The Key ID has been masked and should not appear in logs."
+
+      - name: Authenticate to Google Cloud (Apply)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ inputs.project_id }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GIT_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI (Apply)
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: Update gcloud components (Apply)
+        run: gcloud components update --quiet
+
+      - name: Configure gcloud default project (Apply)
+        run: gcloud config set project ${{ inputs.project_id }}
+
+      - name: Apply - Delete API Key
+        env:
+          PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }}
+          KEY_ID_FOR_SHELL: ${{ env.KEY_ID }} 
+        run: |
+          echo "--- APPLY: API Key Deletion ---"
+          # ... (rest of the delete logic with gcloud describe and delete remains the same) ...
+          echo "Attempting to delete the specified API Key ID (masked: $KEY_ID_FOR_SHELL) in project '$PROJECT_ID_FOR_SHELL'..."
+          
+          KEY_DISPLAY_NAME_BEFORE_DELETE=$(gcloud services api-keys describe "$KEY_ID_FOR_SHELL" --project="$PROJECT_ID_FOR_SHELL" --format="value(displayName)" 2>/dev/null)
+          if [ -n "$KEY_DISPLAY_NAME_BEFORE_DELETE" ]; then
+            echo "Found API Key (ID: $KEY_ID_FOR_SHELL) with DisplayName: '$KEY_DISPLAY_NAME_BEFORE_DELETE'. Proceeding with deletion."
+          else
+            echo "The specified API Key ID (masked: $KEY_ID_FOR_SHELL) was not found or could not be accessed before deletion attempt (it might have already been deleted, or the ID/Project ID is incorrect)."
+            echo "Proceeding with delete command; gcloud will report an error if the key ID is invalid or other issues occur."
+          fi
+
+          echo "Executing: gcloud services api-keys delete \"$KEY_ID_FOR_SHELL\" --project=\"$PROJECT_ID_FOR_SHELL\""
+          GCLOUD_DELETE_STDERR_OUTPUT_FILE=$(mktemp)
+          if gcloud services api-keys delete "$KEY_ID_FOR_SHELL" --project="$PROJECT_ID_FOR_SHELL" 2>"$GCLOUD_DELETE_STDERR_OUTPUT_FILE"; then
+            echo "The specified API Key ID (masked: $KEY_ID_FOR_SHELL) was successfully deleted (or was already not found) from project '$PROJECT_ID_FOR_SHELL'."
+            if [ -n "$KEY_DISPLAY_NAME_BEFORE_DELETE" ]; then
+              echo "(The key, if it existed, had DisplayName: '$KEY_DISPLAY_NAME_BEFORE_DELETE')"
+            fi
+          else
+            DELETE_EXIT_CODE=$?
+            echo "ERROR: The 'gcloud services api-keys delete' command failed. Details below."
+            echo "Command exit code: $DELETE_EXIT_CODE"
+            echo "=====BEGIN GCLOUD STDERR (delete attempt)====="
+            cat "$GCLOUD_DELETE_STDERR_OUTPUT_FILE"
+            echo "=====END GCLOUD STDERR (delete attempt)====="
+            echo "" 
+            echo "Failed to delete API Key ID '$KEY_ID_FOR_SHELL' (masked) from project '$PROJECT_ID_FOR_SHELL'."
+            echo "This could be due to:"
+            echo "- The Key ID being incorrect or malformed."
+            echo "- Insufficient permissions (ensure the service account has 'serviceusage.apiKeys.delete' permission)."
+            echo "- The API Keys API (apikeys.googleapis.com) not being enabled or other transient issues."
+            echo "Please check the gcloud error messages above for specific details."
+            rm -f "$GCLOUD_DELETE_STDERR_OUTPUT_FILE" 
+            exit 1 
+          fi
+          rm -f "$GCLOUD_DELETE_STDERR_OUTPUT_FILE" 
+          echo "----------------------------------"
