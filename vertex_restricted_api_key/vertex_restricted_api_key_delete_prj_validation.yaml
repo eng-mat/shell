@@ -39,17 +39,20 @@ jobs:
 
           # Project ID Pattern Validation
           ALLOWED_PATTERNS_FOR_SECOND_SEGMENT="poc|ppoc"
-          TARGET_REGEX_PATTERN="^[a-z0-9][a-z0-9-]*-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9][a-z0-9-.]*[a-z0-9]$"
-          echo "Validating Project ID '$PROJECT_ID_INPUT' using pattern for second segment: $ALLOWED_PATTERNS_FOR_SECOND_SEGMENT"
-          echo "Full regex being applied: $TARGET_REGEX_PATTERN"
+          TARGET_REGEX_PATTERN="^[a-z0-9-]+-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9.-]+$"
+          
+          echo "Validating Project ID '$PROJECT_ID_INPUT' using pattern for second segment: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'"
+          echo "Full regex being applied: '$TARGET_REGEX_PATTERN'"
           if ! [[ "$PROJECT_ID_INPUT" =~ $TARGET_REGEX_PATTERN ]]; then
             echo "Error: Project ID '$PROJECT_ID_INPUT' does not meet the required naming convention."
-            echo "The Project ID must be hyphen-separated, start with a letter, and the second segment must be one of: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'."
+            echo "The Project ID must be of the format 'someprefix-segment2-somesuffix' where:"
+            echo "  - 'someprefix' consists of one or more lowercase letters, numbers, and/or hyphens."
+            echo "  - 'segment2' (the part between the first and second hyphens) must be one of: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'."
+            echo "  - 'somesuffix' consists of one or more lowercase letters, numbers, hyphens, and/or dots."
             exit 1
           fi
           echo "Project ID '$PROJECT_ID_INPUT' format validation successful."
           
-          # Mask the Key ID so it doesn't appear raw in logs
           echo "::add-mask::$KEY_ID_INPUT"
           
           echo "PROJECT_ID=$PROJECT_ID_INPUT" >> $GITHUB_ENV
@@ -97,7 +100,6 @@ jobs:
             echo "" 
             echo "This failure could be due to several reasons:"
             echo "- The Key ID ('$KEY_ID_FOR_SHELL') or Project ID ('$PROJECT_ID_FOR_SHELL') is incorrect."
-            # ... (rest of detailed error explanations) ...
             echo "- The key has already been deleted."
             echo "- Insufficient IAM permissions (e.g., the service account is missing 'serviceusage.apiKeys.get' on the project)."
             echo "- The API Keys API (apikeys.googleapis.com) might not be enabled in project '$PROJECT_ID_FOR_SHELL'."
@@ -113,7 +115,6 @@ jobs:
 
           if [ $GCLOUD_DESCRIBE_EXIT_CODE -eq 2 ]; then
             echo "CRITICAL ERROR: The 'gcloud services api-keys describe' command failed with exit code 2."
-            # ... (rest of critical error explanation) ...
             echo "This typically indicates an issue with the gcloud command itself, its arguments, or its environment."
             echo "Please review the gcloud error output above and check the provided Project ID and Key ID inputs."
             exit 2 
@@ -144,10 +145,10 @@ jobs:
             exit 1
           fi
           
-          # Project ID Pattern Validation
           ALLOWED_PATTERNS_FOR_SECOND_SEGMENT="poc|ppoc"
-          TARGET_REGEX_PATTERN="^[a-z0-9][a-z0-9-]*-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9][a-z0-9-.]*[a-z0-9]$"
-          # Not re-printing regex details in apply job to reduce log verbosity, already shown in dry-run.
+          TARGET_REGEX_PATTERN="^[a-z0-9-]+-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9.-]+$"
+          
+          # Not re-printing regex details in apply job
           if ! [[ "$PROJECT_ID_INPUT" =~ $TARGET_REGEX_PATTERN ]]; then
             echo "Error: Project ID '$PROJECT_ID_INPUT' does not meet the required naming convention for apply job."
             exit 1
@@ -184,7 +185,6 @@ jobs:
           KEY_ID_FOR_SHELL: ${{ env.KEY_ID }} 
         run: |
           echo "--- APPLY: API Key Deletion ---"
-          # ... (rest of the delete logic with gcloud describe and delete remains the same) ...
           echo "Attempting to delete the specified API Key ID (masked: $KEY_ID_FOR_SHELL) in project '$PROJECT_ID_FOR_SHELL'..."
           
           KEY_DISPLAY_NAME_BEFORE_DELETE=$(gcloud services api-keys describe "$KEY_ID_FOR_SHELL" --project="$PROJECT_ID_FOR_SHELL" --format="value(displayName)" 2>/dev/null)
@@ -211,6 +211,7 @@ jobs:
             echo "=====END GCLOUD STDERR (delete attempt)====="
             echo "" 
             echo "Failed to delete API Key ID '$KEY_ID_FOR_SHELL' (masked) from project '$PROJECT_ID_FOR_SHELL'."
+            # ... (rest of detailed error explanation) ...
             echo "This could be due to:"
             echo "- The Key ID being incorrect or malformed."
             echo "- Insufficient permissions (ensure the service account has 'serviceusage.apiKeys.delete' permission)."

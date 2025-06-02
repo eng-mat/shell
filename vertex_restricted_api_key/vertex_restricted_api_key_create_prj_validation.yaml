@@ -31,7 +31,7 @@ jobs:
     environment: production
     permissions:
       id-token: write
-      contents: read # Changed from write as likely only read is needed
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,27 +45,32 @@ jobs:
             exit 1
           fi
 
-          # Define the allowed patterns for the second segment.
-          # To add more patterns in the future, modify the string below (e.g., "poc|ppoc|dev|qa").
           ALLOWED_PATTERNS_FOR_SECOND_SEGMENT="poc|ppoc"
           
-          # Regex to validate project ID structure: checks for 'prefix-(poc|ppoc)-suffix'
-          TARGET_REGEX_PATTERN="^[a-z0-9][a-z0-9-]*-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9][a-z0-9-.]*[a-z0-9]$"
+          # Simplified Regex based on user's structure:
+          # ^[a-z0-9-]+                             : Segment 1 (project prefix: lowercase letters, numbers, one or more hyphens allowed)
+          # -                                       : Separator
+          # (${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT}) : Segment 2 (must be one of the allowed patterns)
+          # -                                       : Separator
+          # [a-z0-9.-]+$                            : Segment 3 (project suffix: lowercase letters, numbers, hyphens, dots, one or more)
+          TARGET_REGEX_PATTERN="^[a-z0-9-]+-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9.-]+$"
 
-          echo "Validating Project ID '$PROJECT_ID_INPUT' using pattern for second segment: $ALLOWED_PATTERNS_FOR_SECOND_SEGMENT"
-          echo "Full regex being applied: $TARGET_REGEX_PATTERN"
+          echo "Validating Project ID '$PROJECT_ID_INPUT' using pattern for second segment: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'"
+          echo "Full regex being applied: '$TARGET_REGEX_PATTERN'"
           
           if ! [[ "$PROJECT_ID_INPUT" =~ $TARGET_REGEX_PATTERN ]]; then
             echo "Error: Project ID '$PROJECT_ID_INPUT' does not meet the required naming convention."
-            echo "The Project ID must be hyphen-separated, start with a letter, and the second segment must be one of: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'."
-            echo "Example valid format: 'prefix-poc-suffix' or 'my-project-ppoc-version1'."
+            echo "The Project ID must be of the format 'someprefix-segment2-somesuffix' where:"
+            echo "  - 'someprefix' consists of one or more lowercase letters, numbers, and/or hyphens."
+            echo "  - 'segment2' (the part between the first and second hyphens) must be one of: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'."
+            echo "  - 'somesuffix' consists of one or more lowercase letters, numbers, hyphens, and/or dots."
+            echo "Example valid format: 'my-prefix-poc-my-suffix' or 'epake-ppoc-mytest.v1'"
             exit 1
           fi
           
           echo "Project ID '$PROJECT_ID_INPUT' format validation successful."
           echo "PROJECT_ID=$PROJECT_ID_INPUT" >> $GITHUB_ENV
           echo "PROJECT_ID environment variable set for this job."
-
 
       - name: Authenticate to Google Cloud (Dry Run)
         uses: 'google-github-actions/auth@v2'
@@ -83,6 +88,7 @@ jobs:
       - name: Configure gcloud default project (Dry Run)
         run: gcloud config set project ${{ inputs.project_id }}
 
+      # ... (Rest of the dry-run steps for Create API Key workflow remain the same)
       - name: Determine Vertex AI service account email (Dry Run)
         id: set_sa_email_dry_run
         run: |
@@ -182,7 +188,7 @@ jobs:
     needs: dry-run
     permissions:
       id-token: write
-      contents: read # Changed from write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -197,14 +203,12 @@ jobs:
           fi
 
           ALLOWED_PATTERNS_FOR_SECOND_SEGMENT="poc|ppoc"
-          TARGET_REGEX_PATTERN="^[a-z0-9][a-z0-9-]*-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9][a-z0-9-.]*[a-z0-9]$"
+          TARGET_REGEX_PATTERN="^[a-z0-9-]+-(${ALLOWED_PATTERNS_FOR_SECOND_SEGMENT})-[a-z0-9.-]+$"
           
-          echo "Validating Project ID '$PROJECT_ID_INPUT' using pattern for second segment: $ALLOWED_PATTERNS_FOR_SECOND_SEGMENT"
-          # Not re-printing regex here to reduce log verbosity, already shown in dry-run
-          
+          # Not re-printing regex details in apply job to reduce log verbosity
           if ! [[ "$PROJECT_ID_INPUT" =~ $TARGET_REGEX_PATTERN ]]; then
-            echo "Error: Project ID '$PROJECT_ID_INPUT' does not meet the required naming convention."
-            echo "The Project ID must be hyphen-separated, start with a letter, and the second segment must be one of: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'."
+            echo "Error: Project ID '$PROJECT_ID_INPUT' does not meet the required naming convention for apply job."
+            echo "The second segment must be one of: '$ALLOWED_PATTERNS_FOR_SECOND_SEGMENT'."
             exit 1
           fi
           
@@ -227,7 +231,8 @@ jobs:
 
       - name: Configure gcloud default project (Apply Run)
         run: gcloud config set project ${{ inputs.project_id }}
-
+      
+      # ... (Rest of the apply steps for Create API Key workflow remain the same)
       - name: Determine Vertex AI service account email (Apply Run)
         id: set_sa_email_apply_run
         run: |
@@ -250,7 +255,6 @@ jobs:
           SA_DISPLAY_NAME_FOR_CREATION="Vertex AI Service Account (created by GHA workflow)"
 
           echo "--- APPLY RUN: IAM Role for Vertex AI Service Account ---"
-          # ... (rest of the logic for SA creation and IAM binding remains the same) ...
           echo "Processing Service Account: $SA_EMAIL_TO_PROCESS in project ${{ env.PROJECT_ID_FOR_SHELL }}"
 
           SA_READY_FOR_IAM=false
@@ -306,7 +310,6 @@ jobs:
           API_KEY_VIEWER_ROLE="${{ env.IAM_ROLE_API_KEY_VIEWER }}"
 
           echo "--- APPLY RUN: IAM Role for User Group ---"
-          # ... (rest of the logic for granting role to group remains the same) ...
           echo "Granting IAM role '$API_KEY_VIEWER_ROLE' to group '$USER_GROUP_EMAIL' in project ${{ env.PROJECT_ID_FOR_SHELL }}..."
           if gcloud projects add-iam-policy-binding "${{ env.PROJECT_ID_FOR_SHELL }}" \
             --member="group:$USER_GROUP_EMAIL" \
@@ -323,7 +326,6 @@ jobs:
           PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }}
         run: |
           echo "--- APPLY RUN: Enabling APIs ---"
-          # ... (rest of the logic for enabling APIs remains the same) ...
           echo "Attempting to enable the following APIs in project '${{ env.PROJECT_ID_FOR_SHELL }}':"
           echo "${{ env.APIS_TO_ENABLE }}"
           if gcloud services enable ${{ env.APIS_TO_ENABLE }} --project="${{ env.PROJECT_ID_FOR_SHELL }}"; then
@@ -344,7 +346,6 @@ jobs:
           API_KEY_TARGET_FLAGS_CONFIG="${{ env.API_TARGET_FLAGS }}"
 
           echo "--- APPLY RUN: API Key Creation ---"
-          # ... (rest of the logic for API key creation remains the same) ...
           echo "Creating API key '$API_KEY_NAME' in project '${{ env.PROJECT_ID_FOR_SHELL }}' with specified restrictions..."
           
           gcloud services api-keys create \
@@ -362,8 +363,8 @@ jobs:
         env:
           PROJECT_ID_FOR_SHELL: ${{ env.PROJECT_ID }}
         run: |
-          # ... (GitHub step summary logic remains the same) ...
           echo "## API Key Retrieval Instructions" >> $GITHUB_STEP_SUMMARY
+          # ... (rest of summary unchanged)
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "A Vertex AI API Key creation process was initiated with the following details:" >> $GITHUB_STEP_SUMMARY
           echo "- **GCP Project ID**: \`${{ env.PROJECT_ID_FOR_SHELL }}\`" >> $GITHUB_STEP_SUMMARY
