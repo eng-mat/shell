@@ -1,0 +1,7 @@
+# This file assigns ownership of files to a specific team for review and approval
+
+# Require approval from @your-org/secure-team for everything in the repo
+* @your-org/secure-team
+
+# Also protect workflows explicitly
+.github/workflows/* @your-org/secure-team
