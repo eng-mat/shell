@@ -1,0 +1,211 @@
+name: vertex IAM Role Automation with Allowed Roles Check
+
+on:
+  workflow_dispatch: # Allow manual triggering from the GitHub Actions UI
+    inputs:
+      gcp_project_id:
+        description: 'The GCP Project ID to assign roles in'
+        required: true
+        type: string
+      gcp_service_account_email:
+        description: 'Optional: Email of the GCP Service Account to assign roles to'
+        required: false
+        type: string
+      individual_roles_sa:
+        description: 'Optional: Comma-separated individual IAM roles for the Service Account (e.g., roles/viewer,roles/storage.objectViewer)'
+        required: false
+        type: string
+        default: ''
+      bundled_roles_sa:
+        description: 'Optional: Select a predefined bundled role for the Service Account'
+        required: false
+        type: choice
+        options:
+          - '' 
+          - 'GenAI_ADMIN'
+          - 'GenAI_DEVELOPER'
+          - 'CUSTOM_BUNDLE_1'
+        default: ''
+      ad_group_email:
+        description: 'Optional: Email of the Active Directory Group to assign roles to'
+        required: false
+        type: string
+      individual_roles_ad:
+        description: 'Optional: Comma-separated individual IAM roles for the AD Group (e.g., roles/editor,roles/compute.networkAdmin)'
+        required: false
+        type: string
+        default: ''
+      bundled_roles_ad:
+        description: 'Optional: Select a predefined bundled role for the AD Group'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'GenAI_ADMIN'
+          - 'GenAI_DEVELOPER'
+          - 'CUSTOM_BUNDLE_1'
+        default: ''
+
+env:
+  WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}      
+  WIF_SERVICE_ACCOUNT: ${{ secrets.GIT_SERVICE_ACCOUNT }} 
+  PYTHON_VERSION: '3.9'
+  # ALLOWED_INDIVIDUAL_IAM_ROLES will be sourced from GitHub environment variables (vars context)
+  # Example: "roles/storage.objectViewer,roles/bigquery.dataViewer,custom/specificRole"
+
+jobs:
+  validate-and-dry-run:
+    name: Validate Inputs & Dry Run IAM Changes
+    runs-on: ubuntu-latest
+    environment:
+      name: production # Ensure this environment has ALLOWED_INDIVIDUAL_IAM_ROLES variable defined
+    permissions:
+      contents: read    
+      id-token: write   
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Allowed IAM Roles
+        env: 
+          ALLOWED_ROLES_FROM_VARS: ${{ vars.ALLOWED_INDIVIDUAL_IAM_ROLES }}
+        run: |
+          echo "Validating provided individual IAM roles against allowed list..."
+          ALLOWED_LIST="${ALLOWED_ROLES_FROM_VARS}" 
+          
+          if [[ -z "$ALLOWED_LIST" ]]; then
+            echo "::error::ALLOWED_INDIVIDUAL_IAM_ROLES environment variable is not set or is empty. Cannot validate roles. Please define it in your GitHub environment settings."
+            exit 1 # Fail if the allowed list is not defined, as it's crucial for this validation.
+          fi
+
+          echo "Allowed roles list: $ALLOWED_LIST"
+          # Convert allowed list string to an array
+          IFS=',' read -r -a ALLOWED_ARRAY <<< "$ALLOWED_LIST"
+          
+          # Function to check roles
+          check_roles() {
+            local role_input_string="$1"
+            local role_type_desc="$2" # e.g., "Service Account" or "AD Group"
+            
+            if [[ -z "$role_input_string" ]]; then
+              echo "No individual roles provided for $role_type_desc. Skipping validation for it."
+              return 0
+            fi
+
+            IFS=',' read -r -a INPUT_ROLES_ARRAY <<< "$role_input_string"
+            
+            for input_role in "${INPUT_ROLES_ARRAY[@]}"; do
+              # Trim whitespace from input_role
+              trimmed_input_role=$(echo "$input_role" | xargs)
+              if [[ -z "$trimmed_input_role" ]]; then
+                continue # Skip empty role string
+              fi
+
+              found_in_allowed_list=false
+              for allowed_role in "${ALLOWED_ARRAY[@]}"; do
+                # Trim whitespace from allowed_role
+                trimmed_allowed_role=$(echo "$allowed_role" | xargs)
+                if [[ "$trimmed_input_role" == "$trimmed_allowed_role" ]]; then
+                  found_in_allowed_list=true
+                  break
+                fi
+              done
+
+              if [[ "$found_in_allowed_list" == false ]]; then
+                echo "::error::Provided IAM role '$trimmed_input_role' for $role_type_desc is NOT in the allowed list: [$ALLOWED_LIST]."
+                exit 1 # Fail the workflow
+              fi
+            done
+            echo "Validation passed: All provided individual roles for $role_type_desc are in the allowed list."
+          }
+          
+          # Validate roles for Service Account
+          check_roles "${{ github.event.inputs.individual_roles_sa }}" "Service Account"
+          
+          # Validate roles for AD Group
+          check_roles "${{ github.event.inputs.individual_roles_ad }}" "AD Group"
+          
+          echo "All individual role validations against the allowed list passed."
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ github.event.inputs.gcp_project_id }}
+
+      - name: Execute Dry Run Python Script
+        id: dry_run_script
+        run: |
+          chmod +x ./assign_iam_roles.py 
+          python ./assign_iam_roles.py \
+            --mode dry-run \
+            --project-id "${{ github.event.inputs.gcp_project_id }}" \
+            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
+            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
+            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
+            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
+            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
+            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}" > dry_run_output.txt 2>&1
+
+      - name: Upload Dry Run Output as Artifact
+        if: always() 
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-iam-policy-changes
+          path: dry_run_output.txt 
+          retention-days: 5
+
+  apply:
+    name: Apply IAM Changes
+    runs-on: ubuntu-latest
+    needs: validate-and-dry-run 
+    if: github.event_name == 'workflow_dispatch' 
+    environment:
+      name: production 
+    permissions:
+      contents: read    
+      id-token: write   
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ github.event.inputs.gcp_project_id }}
+
+      - name: Execute Apply Python Script
+        run: |
+          chmod +x ./assign_iam_roles.py
+          python ./assign_iam_roles.py \
+            --mode apply \
+            --project-id "${{ github.event.inputs.gcp_project_id }}" \
+            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
+            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
+            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
+            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
+            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
+            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}"
