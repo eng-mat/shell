@@ -1,0 +1,139 @@
+name: Deploy Vertex AI Notebook and GCS Bucket
+
+# This workflow is triggered manually from the GitHub Actions UI.
+on:
+  workflow_dispatch:
+    inputs:
+      service_project_id:
+        description: 'Service Project ID (e.g., test-poc-mymy, another-ppoc-project). Note: poc/ppoc should be in the second segment.'
+        required: true
+        type: string
+      environment_type:
+        description: 'Select the environment type (nonprod or prod). This will be used for environment-specific configurations like CMEK keys.'
+        required: true
+        type: choice
+        options:
+          - nonprod
+          - prod
+      region:
+        description: 'Select the GCP Region for the Notebook and GCS Bucket (us-east4 or us-central1).'
+        required: true
+        type: choice
+        options:
+          - us-east4
+          - us-central1
+      vpc_name:
+        description: 'Select the VPC network from the available options. This choice helps determine the correct host project.'
+        required: true
+        type: choice
+        options:
+          # Updated VPC names based on your provided mapping
+          - vpc-ss-tru-nonprod-7
+          - vpc-ss-tru-prod-7
+          - vpc-jjk-tru-nonprod-7
+          - vpc-jjk-tru-prod-7
+          - vpc-jjkkula-tru-nonprod-7
+          - vpc-jjkkula-tru-prod-7
+      subnet_name:
+        description: 'Enter the specific subnet name within the selected VPC (e.g., subnet-us-east4-1).'
+        required: true
+        type: string
+      instance_owner_email:
+        description: 'Email address of the Vertex AI Notebook instance owner.'
+        required: true
+        type: string
+      # NEW INPUT for the user's Active Directory group email
+      user_ad_group_email:
+        description: 'Email address of the User AD Group that needs access.'
+        required: true
+        type: string
+      last_name_first_initial:
+        description: 'Your last name followed by your first initial (e.g., smith-j). This will be used to form the notebook name: smith-j-notebook.'
+        required: true
+        type: string
+      machine_type:
+        description: 'Machine type for the notebook (e.g., e2-standard-4). Defaults to e2-standard-4 if not specified.'
+        required: false
+        default: 'e2-standard-4'
+        type: string
+
+jobs:
+  # Job 1: Dry Run Validation
+  # This job calculates all parameters and performs a dry run without applying any changes.
+  dry_run_validation:
+    name: "Dry Run Validation"
+    runs-on:
+      group: my-group-name
+    environment:
+      name: pordpp
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install required tools
+        run: |-
+          uname -a
+
+      - name: Setup Cloud SDK
+        id: 'gcloud'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+
+      - name: Perform Dry Run using external script
+        run: |
+          ./scripts/vertexai_notebook_gcs.sh --dry-run
+        env:
+          SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          ENVIRONMENT_TYPE: ${{ inputs.environment_type }}
+          REGION: ${{ inputs.region }}
+          VPC_NAME: ${{ inputs.vpc_name }}
+          SUBNET_NAME: ${{ inputs.subnet_name }}
+          INSTANCE_OWNER_EMAIL: ${{ inputs.instance_owner_email }}
+          USER_AD_GROUP_EMAIL: ${{ inputs.user_ad_group_email }} # Pass new input
+          LAST_NAME_FIRST_INITIAL: ${{ inputs.last_name_first_initial }}
+          MACHINE_TYPE: ${{ inputs.machine_type }}
+
+  # Job 2: Apply Changes
+  # This job applies the actual changes to GCP after successful dry run and approval.
+  apply:
+    name: "Apply Changes"
+    runs-on:
+      group: my-group-name
+    needs: dry_run_validation
+    environment:
+      name: pordpp-approval
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install required tools
+        run: |-
+          uname -a
+
+      - name: Setup Cloud SDK
+        id: 'gcloud'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+
+      - name: Make script executable
+        run: chmod +x scripts/vertexai_notebook_gcs.sh
+
+      - name: Apply Changes using external script
+        run: |
+          ./scripts/vertexai_notebook_gcs.sh --apply
+        env:
+          SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          ENVIRONMENT_TYPE: ${{ inputs.environment_type }}
+          REGION: ${{ inputs.region }}
+          VPC_NAME: ${{ inputs.vpc_name }}
+          SUBNET_NAME: ${{ inputs.subnet_name }}
+          INSTANCE_OWNER_EMAIL: ${{ inputs.instance_owner_email }}
+          USER_AD_GROUP_EMAIL: ${{ inputs.user_ad_group_email }} # Pass new input
+          LAST_NAME_FIRST_INITIAL: ${{ inputs.last_name_first_initial }}
+          MACHINE_TYPE: ${{ inputs.machine_type }}
