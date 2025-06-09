@@ -1,4 +1,4 @@
-# This is your creation script, now with debugging logs removed for security.
+# This script creates a new CIDR reservation and correctly parses all arguments.
 import argparse
 import requests
 import json
@@ -14,18 +14,24 @@ def get_infoblox_session(infoblox_url, username, password):
     """Establishes a session with Infoblox and handles authentication."""
     session = requests.Session()
     session.auth = (username, password)
-    session.verify = False 
+    session.verify = False # For production, manage certificates properly.
     return session
 
 def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, cidr_block_size):
-    """Finds the next available CIDR block."""
+    """
+    Finds the next available CIDR block from a supernet container.
+    """
     base_wapi_url = infoblox_url.rstrip('/')
     
     # Step 1: Get the _ref for the supernet (as a 'networkcontainer')
     get_ref_url = f"{base_wapi_url}/networkcontainer"
     logger.info(f"Searching for supernet container '{supernet_ip}' in view '{network_view}'...")
     
-    get_ref_params = {"network_view": network_view, "network": supernet_ip}
+    get_ref_params = {
+        "network_view": network_view,
+        "network": supernet_ip
+    }
+    
     response = None
     supernet_ref = None
     try:
@@ -36,10 +42,11 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
             supernet_ref = data[0]['_ref']
             logger.info("Found supernet container reference.")
         else:
-            logger.error(f"ERROR: Could not find _ref for supernet container '{supernet_ip}'. Response: {json.dumps(data)}")
+            logger.error(f"ERROR: Could not find a 'networkcontainer' object for '{supernet_ip}' in view '{network_view}'.")
+            logger.error(f"Infoblox Response: {json.dumps(data)}")
             return None
     except requests.exceptions.RequestException as e:
-        logger.error(f"ERROR: Infoblox API request failed while getting supernet _ref: {e}")
+        logger.error(f"ERROR: API request failed while getting supernet _ref: {e}")
         if response is not None:
              logger.error(f"Infoblox Response Content: {response.text}")
         return None
@@ -52,7 +59,7 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
     post_func_params = {"_function": "next_available_network"}
     post_func_payload = {"num": 1, "cidr": cidr_block_size}
     
-    logger.info(f"Requesting next available /{cidr_block_size} from container...")
+    logger.info(f"Requesting next available /{cidr_block_size} subnet from the container...")
     response = None
     try:
         response = session.post(post_func_url, params=post_func_params, json=post_func_payload, timeout=30)
@@ -68,7 +75,7 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
             logger.error(f"Raw Infoblox Response: {json.dumps(data, indent=2)}")
             return None
     except requests.exceptions.RequestException as e:
-        logger.error(f"ERROR: Infoblox API request failed while calling next_available_network: {e}")
+        logger.error(f"ERROR: API request failed while calling next_available_network: {e}")
         if response is not None:
             logger.error(f"Infoblox Response Content: {response.text}")
         return None
@@ -81,7 +88,7 @@ def reserve_cidr(session, infoblox_url, proposed_subnet, network_view, subnet_na
         "network_view": network_view,
         "comment": subnet_name,
         "extattrs": {
-            "SiteCode": {"value": site_code} # As per your UI
+            "SiteCode": {"value": site_code}
         }
     }
     logger.info(f"Attempting to reserve CIDR: {proposed_subnet} in network view: {network_view}...")
@@ -92,15 +99,17 @@ def reserve_cidr(session, infoblox_url, proposed_subnet, network_view, subnet_na
         logger.info(f"SUCCESS: Successfully reserved CIDR: {proposed_subnet}. Infoblox Ref: {data}")
         return True
     except requests.exceptions.RequestException as e:
-        logger.error(f"ERROR: Infoblox API request failed during CIDR reservation: {e}")
+        logger.error(f"ERROR: API request failed during CIDR reservation: {e}")
         if response is not None:
              logger.error(f"Infoblox Response Content: {response.text}")
         return False
 
 def get_supernet_info(session, infoblox_url, supernet_ip, network_view):
+    """Simulated function to return supernet info."""
     return f"Information for supernet {supernet_ip} in network view {network_view} (simulation)"
 
 def validate_inputs(network_view, supernet_ip, subnet_name, cidr_block_size_str):
+    """Performs basic input validations."""
     if not all([network_view, supernet_ip, subnet_name, str(cidr_block_size_str)]):
         return False
     try:
@@ -117,7 +126,7 @@ def validate_inputs(network_view, supernet_ip, subnet_name, cidr_block_size_str)
     return True
 
 def main():
-    # Argument parsing remains the same
+    # This parser is designed for the CREATION workflow. It does NOT use subparsers.
     parser = argparse.ArgumentParser(description="Infoblox CIDR Reservation Workflow Script")
     parser.add_argument("action", choices=["dry-run", "apply"], help="Action to perform")
     parser.add_argument("--infoblox-url", required=True)
@@ -130,7 +139,6 @@ def main():
     parser.add_argument("--supernet-after-reservation", help="For apply action")
     args = parser.parse_args()
 
-    # Credentials fetching remains the same
     infoblox_username = os.environ.get("INFOBLOX_USERNAME")
     infoblox_password = os.environ.get("INFOBLOX_PASSWORD")
     if not infoblox_username or not infoblox_password:
@@ -152,7 +160,7 @@ def main():
         if proposed_subnet:
             supernet_after_reservation = get_supernet_info(session, args.infoblox_url, args.supernet_ip, args.network_view)
             
-            # Use the modern GITHUB_OUTPUT method
+            # Use the modern GITHUB_OUTPUT method to set job outputs
             if 'GITHUB_OUTPUT' in os.environ:
                 with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                     print(f"proposed_subnet={proposed_subnet}", file=f)
@@ -161,6 +169,7 @@ def main():
         else:
             logger.error("DRY RUN FAILED: Could not determine a proposed subnet.")
             exit(1)
+
     elif args.action == "apply":
         logger.info("\n--- Performing Apply ---")
         if not args.proposed_subnet:
