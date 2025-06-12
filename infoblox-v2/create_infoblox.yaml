@@ -13,8 +13,11 @@ on:
       supernet_ip:
         description: 'Select the Supernet Container to reserve from'
         required: true
-        type: string
-        default: '100.45.10.0/12 # Test Supernet'
+        type: choice
+        options:
+          - '100.45.10.0/12 # Test Supernet'
+          - '10.10.0.0/17 # gcp-hcb-shared-hub Supernet'
+          - '10.0.0.0/8 # Production Main Supernet'
       subnet_name:
         description: 'Subnet Name (will be used as comment in Infoblox)'
         required: true
