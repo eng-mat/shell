@@ -108,6 +108,23 @@ def get_supernet_info(session, infoblox_url, supernet_ip, network_view):
     """Simulated function to return supernet info."""
     return f"Information for supernet {supernet_ip} in network view {network_view} (simulation)"
 
+def write_summary(args):
+    """Writes a summary of the created reservation to the GitHub Job Summary."""
+    if 'GITHUB_STEP_SUMMARY' in os.environ:
+        logger.info("Writing reservation details to GitHub Job Summary.")
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+            print("## ✅ Infoblox Reservation Successful", file=f)
+            print("---", file=f)
+            print("A new CIDR block has been successfully reserved with the following details:", file=f)
+            print("", file=f)
+            print(f"- **Subnet Name (Comment):** `{args.subnet_name}`", file=f)
+            print(f"- **CIDR Range Reserved:** `{args.proposed_subnet}`", file=f)
+            print(f"- **Network View:** `{args.network_view}`", file=f)
+            print(f"- **Reserved From (Supernet):** `{args.supernet_ip}`", file=f)
+            print(f"- **Site Code:** `{args.site_code}`", file=f)
+            print("", file=f)
+            print("You can view the new reservation in the Infoblox UI.", file=f)
+
 def validate_inputs(network_view, supernet_ip, subnet_name, cidr_block_size_str):
     """Performs basic input validations."""
     if not all([network_view, supernet_ip, subnet_name, str(cidr_block_size_str)]):
@@ -179,6 +196,9 @@ def main():
         if not success:
             logger.error("APPLY FAILED: Could not reserve CIDR.")
             exit(1)
+        
+        # Write the summary to the job summary page
+        write_summary(args)
         logger.info("\nApply completed successfully.")
 
 if __name__ == "__main__":
