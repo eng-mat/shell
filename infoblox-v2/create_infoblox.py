@@ -6,8 +6,8 @@ import ipaddress
 import os
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s]: %(message)s')
+# Configure logging to be more verbose
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s]: %(message)s', force=True)
 logger = logging.getLogger(__name__)
 
 def get_infoblox_session(infoblox_url, username, password):
@@ -126,23 +126,33 @@ def write_summary(args):
             print("You can view the new reservation in the Infoblox UI.", file=f)
 
 def validate_inputs(network_view, supernet_ip, subnet_name, cidr_block_size_str):
-    """Performs basic input validations."""
+    """Performs basic input validations and logs failures."""
     if not all([network_view, supernet_ip, subnet_name, str(cidr_block_size_str)]):
+        logger.error("Validation Error: One or more required inputs are missing or empty.")
         return False
     try:
-        if not (1 <= int(cidr_block_size_str) <= 32):
+        cidr_block_size = int(cidr_block_size_str)
+        if not (1 <= cidr_block_size <= 32):
+            logger.error(f"Validation Error: CIDR block size must be an integer between 1 and 32. Received: {cidr_block_size}")
             return False
     except (ValueError, TypeError):
+        logger.error(f"Validation Error: CIDR block size must be a valid integer. Received: '{cidr_block_size_str}'")
         return False
     try:
         ipaddress.ip_network(supernet_ip, strict=False)
     except ValueError:
+        logger.error(f"Validation Error: Invalid Supernet IP format: '{supernet_ip}'")
         return False
     if not subnet_name.strip():
+        logger.error("Validation Error: Subnet name cannot be empty or just whitespace.")
         return False
+    
+    logger.info("Input validation successful.")
     return True
 
 def main():
+    logger.info("--- Infoblox Reservation Script Starting ---")
+    
     # This parser is designed for the CREATION workflow. It does NOT use subparsers.
     parser = argparse.ArgumentParser(description="Infoblox CIDR Reservation Workflow Script")
     parser.add_argument("action", choices=["dry-run", "apply"], help="Action to perform")
@@ -154,7 +164,14 @@ def main():
     parser.add_argument("--site-code", required=False, default="GCP")
     parser.add_argument("--proposed-subnet", help="For apply action")
     parser.add_argument("--supernet-after-reservation", help="For apply action")
-    args = parser.parse_args()
+    
+    try:
+        args = parser.parse_args()
+        logger.info(f"Action '{args.action}' selected.")
+    except SystemExit as e:
+        logger.error("Argument parsing failed. Please check the workflow inputs and script arguments.")
+        # The argparse module will print the error message, so we just exit.
+        raise e
 
     infoblox_username = os.environ.get("INFOBLOX_USERNAME")
     infoblox_password = os.environ.get("INFOBLOX_PASSWORD")
@@ -163,7 +180,7 @@ def main():
         exit(1)
 
     if not validate_inputs(args.network_view, args.supernet_ip, args.subnet_name, args.cidr_block_size):
-        logger.error("Input validation failed.")
+        logger.error("Input validation failed. Exiting.")
         exit(1)
         
     session = get_infoblox_session(args.infoblox_url, infoblox_username, infoblox_password)
