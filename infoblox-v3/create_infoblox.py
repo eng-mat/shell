@@ -88,17 +88,18 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_list,
     return None, None
 
 
-def reserve_cidr(session, infoblox_url, proposed_subnet, subnet_name, site_code):
-    """Performs the actual CIDR reservation. The network view is derived from the subnet."""
+def reserve_cidr(session, infoblox_url, proposed_subnet, network_view, subnet_name, site_code):
+    """Performs the actual CIDR reservation, now with the correct network view."""
     wapi_url = f"{infoblox_url.rstrip('/')}/network"
     payload = {
         "network": proposed_subnet,
+        "network_view": network_view, # Added network_view to the payload
         "comment": subnet_name,
         "extattrs": {
             "SiteCode": {"value": site_code}
         }
     }
-    logger.info(f"Attempting to reserve CIDR: {proposed_subnet}...")
+    logger.info(f"Attempting to reserve CIDR '{proposed_subnet}' in network view '{network_view}'...")
     try:
         response = session.post(wapi_url, json=payload, timeout=30)
         response.raise_for_status()
@@ -136,6 +137,7 @@ def main():
     parser_apply = subparsers.add_parser('apply', help='Reserve the CIDR found in the dry-run.')
     parser_apply.add_argument("--infoblox-url", required=True)
     parser_apply.add_argument("--proposed-subnet", required=True)
+    parser_apply.add_argument("--network-view", required=True) # Added network-view argument
     parser_apply.add_argument("--subnet-name", required=True)
     parser_apply.add_argument("--site-code", required=True)
     
@@ -189,6 +191,7 @@ def main():
                 with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                     print(f"proposed_subnet={proposed_subnet}", file=f)
                     print(f"supernet_used={supernet_used}", file=f)
+                    print(f"network_view={network_view}", file=f) # Added network_view to the output
             logger.info("\nDry run completed successfully.")
         else:
             logger.error("DRY RUN FAILED: Could not determine a proposed subnet from any of the mapped supernets.")
@@ -196,7 +199,7 @@ def main():
 
     elif args.action == "apply":
         logger.info("\n--- Performing Apply ---")
-        success = reserve_cidr(session, args.infoblox_url, args.proposed_subnet, args.subnet_name, args.site_code)
+        success = reserve_cidr(session, args.infoblox_url, args.proposed_subnet, args.network_view, args.subnet_name, args.site_code)
         if not success:
             logger.error("APPLY FAILED: Could not reserve CIDR.")
             exit(1)

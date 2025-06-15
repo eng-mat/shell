@@ -1,0 +1,221 @@
+# This workflow has been enhanced to handle multiple subnet purposes and user-defined CIDR sizes.
+name: 'Infoblox & GCP: End-to-End Subnet Creation'
+
+on:
+  workflow_dispatch:
+    inputs:
+      subnet_purpose:
+        description: 'Primary purpose of the subnet (This choice drives the logic).'
+        required: true
+        type: choice
+        options:
+          - 'Standard VM/Appliance'
+          - 'GKE Cluster'
+          - 'PSC Endpoint'
+      
+      network_type:
+        description: 'Select the Network/VPC context for the new subnet.'
+        required: true
+        type: choice
+        options:
+          # Add all keys from your JSON mapping here for the dropdown
+          - 'network_view_nonprod_route1'
+          - 'network_view_prod_route1'
+          - 'mg_central_nonprod_nonpsc'
+          - 'mg_central_prod_psc'
+
+      region:
+        description: 'GCP Region for the new subnet.'
+        required: true
+        type: choice
+        options:
+          - 'us-central1'
+          - 'us-east1'
+          - 'us-east4'
+          - 'us-west1'
+          - 'europe-west1'
+          - 'asia-east1'
+
+      # --- Conditional Inputs ---
+      service_project_id:
+        description: '(For Standard/GKE) The Service Project ID to share this subnet with.'
+        required: false
+      psc_host_project_name:
+        description: '(For PSC Only) The dedicated PSC Host Project to share with.'
+        required: false
+        type: choice
+        options:
+          - 'Non-Prod PSC Host 1'
+          - 'Non-Prod PSC Host 2'
+          - 'Non-Prod PSC Host 3'
+          - 'Non-Prod PSC Host 4'
+          - 'Prod PSC Host 1'
+          - 'Prod PSC Host 2'
+          - 'Prod PSC Host 3'
+          - 'Prod PSC Host 4'
+
+      # --- Subnet & CIDR Inputs ---
+      subnet_name:
+        description: 'Name for the new subnet (e.g., my-app-subnet).'
+        required: true
+        type: string
+      primary_cidr_size:
+        description: 'CIDR prefix size for the primary subnet range (e.g., 28).'
+        required: true
+        type: number
+        default: 28
+      
+      # --- GKE-Specific Inputs ---
+      gke_pods_range_name:
+        description: '(GKE Only) Name for the Pods secondary range.'
+        required: false
+      gke_pods_cidr_size:
+        description: '(GKE Only) CIDR prefix size for the Pods range (e.g., 22).'
+        required: false
+        type: number
+        default: 22
+      gke_services_range_name:
+        description: '(GKE Only) Name for the Services secondary range.'
+        required: false
+      gke_services_cidr_size:
+        description: '(GKE Only) CIDR prefix size for the Services range (e.g., 24).'
+        required: false
+        type: number
+        default: 24
+
+jobs:
+  # Job 1: Reserve IPs in Infoblox
+  dry-run:
+    name: 'Plan: Reserve IP addresses in Infoblox'
+    runs-on: ubuntu-latest
+    environment: infoblox-prod 
+    outputs:
+      host_project_id: ${{ steps.reserve_ips_step.outputs.host_project_id }}
+      vpc_name: ${{ steps.reserve_ips_step.outputs.vpc_name }}
+      primary_cidr: ${{ steps.reserve_ips_step.outputs.primary_cidr }}
+      pods_cidr: ${{ steps.reserve_ips_step.outputs.pods_cidr }}
+      services_cidr: ${{ steps.reserve_ips_step.outputs.services_cidr }}
+      supernet_used: ${{ steps.reserve_ips_step.outputs.supernet_used }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Get and Mask Infoblox Credentials
+        run: |
+          set -e
+          SECRET_USERNAME_NAME="${{ secrets.INFOBLOX_SECRET_USERNAME }}"
+          SECRET_PASSWORD_NAME="${{ secrets.INFOBLOX_SECRET_PASSWORD }}"
+          GCLOUD_PROJECT="YOUR_GCP_PROJECT_ID" # IMPORTANT: Replace
+
+          INFOBLOX_USERNAME_VAL=$(gcloud secrets versions access latest --secret="${SECRET_USERNAME_NAME}" --project="${GCLOUD_PROJECT}")
+          INFOBLOX_PASSWORD_VAL=$(gcloud secrets versions access latest --secret="${SECRET_PASSWORD_NAME}" --project="${GCLOUD_PROJECT}")
+          
+          echo "::add-mask::$INFOBLOX_USERNAME_VAL"
+          echo "::add-mask::$INFOBLOX_PASSWORD_VAL"
+          echo "INFOBLOX_USERNAME=$INFOBLOX_USERNAME_VAL" >> $GITHUB_ENV
+          echo "INFOBLOX_PASSWORD=$INFOBLOX_PASSWORD_VAL" >> $GITHUB_ENV
+        
+      - name: Install Python dependencies
+        run: pip install requests pyyaml
+
+      - name: Reserve IP Address(es) in Infoblox
+        id: reserve_ips_step
+        run: |
+          python infoblox_gcp_subnet_automation.py reserve-ips \
+            --infoblox-url "${{ secrets.INFOBLOX_URL }}" \
+            --subnet-purpose "${{ github.event.inputs.subnet_purpose }}" \
+            --network-type "${{ github.event.inputs.network_type }}" \
+            --subnet-name "${{ github.event.inputs.subnet_name }}" \
+            --primary-cidr-size ${{ github.event.inputs.primary_cidr_size }} \
+            --gke-pods-cidr-size ${{ github.event.inputs.gke_pods_cidr_size }} \
+            --gke-services-cidr-size ${{ github.event.inputs.gke_services_cidr_size }}
+        env:
+          INFOBLOX_USERNAME: ${{ env.INFOBLOX_USERNAME }}
+          INFOBLOX_PASSWORD: ${{ env.INFOBLOX_PASSWORD }}
+          INFRA_MAPPINGS_JSON: ${{ vars.INFRA_MAPPINGS_JSON }}
+
+  # Job 2: Create and Share Subnet in GCP
+  apply:
+    name: 'Apply: Create and Share GCP Subnet'
+    runs-on: ubuntu-latest
+    needs: dry-run
+    environment: infoblox-prod 
+    if: success() && needs.dry-run.outputs.primary_cidr != ''
+    permissions:
+      id-token: write
+      contents: read
+      gcloud: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Install Python & GCP dependencies
+        run: |
+          pip install requests pyyaml
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+          sudo apt-get install -y apt-transport-https ca-certificates gnupg
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+          sudo apt-get update && sudo apt-get install -y google-cloud-cli
+
+      - name: Create and Share Subnet
+        id: create_share_step
+        run: |
+          python infoblox_gcp_subnet_automation.py create-and-share-subnet \
+            --subnet-purpose "${{ github.event.inputs.subnet_purpose }}" \
+            --host-project-id "${{ needs.dry-run.outputs.host_project_id }}" \
+            --vpc-name "${{ needs.dry-run.outputs.vpc_name }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --service-project-id "${{ github.event.inputs.service_project_id }}" \
+            --psc-host-project-name "${{ github.event.inputs.psc_host_project_name }}" \
+            --subnet-name "${{ github.event.inputs.subnet_name }}" \
+            --primary-cidr "${{ needs.dry-run.outputs.primary_cidr }}" \
+            --pods-cidr "${{ needs.dry-run.outputs.pods_cidr }}" \
+            --services-cidr "${{ needs.dry-run.outputs.services_cidr }}" \
+            --gke-pods-range-name "${{ github.event.inputs.gke_pods_range_name }}" \
+            --gke-services-range-name "${{ github.event.inputs.gke_services_range_name }}"
+
+      - name: Display Creation Summary
+        if: success()
+        run: |
+          echo "## ✅ Full Subnet Automation Successful" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "A new subnet has been reserved, created, and shared with the following details:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Purpose:** \`${{ github.event.inputs.subnet_purpose }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Subnet Name:** \`${{ github.event.inputs.subnet_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Host Project:** \`${{ needs.dry-run.outputs.host_project_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **VPC:** \`${{ needs.dry-run.outputs.vpc_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** \`${{ github.event.inputs.region }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Primary CIDR:** \`${{ needs.dry-run.outputs.primary_cidr }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.subnet_purpose }}" == "GKE Cluster" ]; then
+            echo "- **Pods CIDR (Secondary):** \`${{ needs.dry-run.outputs.pods_cidr }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Services CIDR (Secondary):** \`${{ needs.dry-run.outputs.services_cidr }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ github.event.inputs.subnet_purpose }}" == "PSC Endpoint" ]; then
+            echo "- **Shared With (PSC Project):** \`${{ github.event.inputs.psc_host_project_name }}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Shared With (Service Project):** \`${{ github.event.inputs.service_project_id }}\`" >> $GITHUB_STEP_SUMMARY
+          fi

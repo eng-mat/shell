@@ -1,0 +1,112 @@
+{
+  "network_view_nonprod_route1": {
+    "host_project_id": "kelikeli",
+    "vpc_name": "kelikeli-nonprod-vpc",
+    "network_view": "network_view_route1",
+    "supernets": ["10.10.10.10/16", "20.20.20.20/16"],
+    "non_routable_key": "network_view_nonprod_nonroute1"
+  },
+  "network_view_nonprod_nonroute1": {
+    "host_project_id": "kelikeli",
+    "network_view": "network_view_nonroute1",
+    "supernets": ["10.20.30.10/12"]
+  },
+  "network_view_nonprod_route2": {
+    "host_project_id": "elegbade",
+    "vpc_name": "elegbade-nonprod-vpc",
+    "network_view": "network_view_route2",
+    "supernets": ["30.30.30.30/14", "40.12.2.2/18"],
+    "non_routable_key": "network_view_nonprod_nonroute2"
+  },
+  "network_view_nonprod_nonroute2": {
+    "host_project_id": "elegbade",
+    "network_view": "network_view_nonroute2",
+    "supernets": ["30.30.15.0/14"]
+  },
+  "network_view_prod_route1": {
+    "host_project_id": "kelikeli",
+    "vpc_name": "kelikeli-prod-vpc",
+    "network_view": "network_view_route1",
+    "supernets": ["10.10.10.10/16", "20.20.20.20/16"],
+    "non_routable_key": "network_view_prod_nonroute1"
+  },
+  "network_view_prod_nonroute1": {
+    "host_project_id": "kelikeli",
+    "network_view": "network_view_nonroute1",
+    "supernets": ["10.20.30.10/12"]
+  },
+  "network_view_prod_route2": {
+    "host_project_id": "elegbade",
+    "vpc_name": "elegbade-prod-vpc",
+    "network_view": "network_view_route2",
+    "supernets": ["30.30.30.30/14", "40.12.2.2/18"],
+    "non_routable_key": "network_view_prod_nonroute2"
+  },
+  "network_view_prod_nonroute2": {
+    "host_project_id": "elegbade",
+    "network_view": "network_view_nonroute2",
+    "supernets": ["30.30.15.0/14"]
+  },
+  "mg_central_nonprod_nonpsc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "mg-nonprod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["10.10.10.10/16", "20.20.20.20/16"],
+    "non_routable_key": "network_view_nonprod_nonroutable_nonnonpsc"
+  },
+  "mg_east_nonprod_nonpsc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "mg-nonprod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["10.10.2.10/14", "20.20.20.20/12"],
+    "non_routable_key": "network_view_nonprod_nonroutable_nonnonpsc"
+  },
+  "network_view_nonprod_nonroutable_nonnonpsc": {
+    "host_project_id": "mumumu",
+    "network_view": "network_view_nonprod_nonnonpsc",
+    "supernets": ["10.20.30.10/12"]
+  },
+  "mg_central_prod_nonpsc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "mg-prod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["13.10.10.3/16", "20.20.9.20/16"],
+    "non_routable_key": "network_view_prod_nonroutable_nonnonpsc"
+  },
+  "mg_east_prod_nonpsc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "mg-prod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["10.10.2.16/14", "20.20.12.20/12"],
+    "non_routable_key": "network_view_prod_nonroutable_nonnonpsc"
+  },
+  "network_view_prod_nonroutable_nonnonpsc": {
+    "host_project_id": "mumumu",
+    "network_view": "network_view_prod_nonnonpsc",
+    "supernets": ["30.30.15.0/14"]
+  },
+  "mg_central_nonprod_psc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "psc-nonprod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["10.10.6.10/16", "20.6.20.2/16"]
+  },
+  "mg_east_nonprod_psc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "psc-nonprod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["10.10.2.6/14", "20.20.3.20/12"]
+  },
+  "mg_central_prod_psc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "psc-prod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["10.16.6.10/16", "20.6.9.2/16"]
+  },
+  "mg_east_prod_psc": {
+    "host_project_id": "mumumu",
+    "vpc_name": "psc-prod-vpc",
+    "network_view": "network_view_spec_route",
+    "supernets": ["10.18.2.6/14", "20.88.3.20/12"]
+  }
+}

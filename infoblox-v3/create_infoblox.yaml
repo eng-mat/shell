@@ -67,6 +67,7 @@ jobs:
     outputs:
       proposed_subnet: ${{ steps.infoblox_dry_run_step.outputs.proposed_subnet }}
       supernet_used: ${{ steps.infoblox_dry_run_step.outputs.supernet_used }}
+      network_view: ${{ steps.infoblox_dry_run_step.outputs.network_view }} # Added network_view output
     permissions:
       id-token: write
       contents: read
@@ -165,15 +166,20 @@ jobs:
 
       - name: Run Infoblox Apply Script
         id: apply_step
+        env:
+          INFOBLOX_USERNAME: ${{ env.INFOBLOX_USERNAME }}
+          INFOBLOX_PASSWORD: ${{ env.INFOBLOX_PASSWORD }}
+          # Pass the outputs from the dry-run job into environment variables
+          PROPOSED_SUBNET_FROM_DRYRUN: ${{ needs.dry-run.outputs.proposed_subnet }}
+          NETWORK_VIEW_FROM_DRYRUN: ${{ needs.dry-run.outputs.network_view }}
         run: |
+          # Use the environment variables, which is more reliable
           python infoblox_create_cidr_enhanced.py apply \
             --infoblox-url "${{ secrets.INFOBLOX_URL }}" \
             --subnet-name "${{ github.event.inputs.subnet_name }}" \
             --site-code "GCP" \
-            --proposed-subnet "${{ needs.dry-run.outputs.proposed_subnet }}"
-        env:
-          INFOBLOX_USERNAME: ${{ env.INFOBLOX_USERNAME }}
-          INFOBLOX_PASSWORD: ${{ env.INFOBLOX_PASSWORD }}
+            --proposed-subnet "${PROPOSED_SUBNET_FROM_DRYRUN}" \
+            --network-view "${NETWORK_VIEW_FROM_DRYRUN}"
       
       - name: Display Reservation Summary
         if: success()
@@ -184,6 +190,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Subnet Name (Comment):** \`${{ github.event.inputs.subnet_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **CIDR Range Reserved:** \`${{ needs.dry-run.outputs.proposed_subnet }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Network View:** \`${{ needs.dry-run.outputs.network_view }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Reserved From (Supernet):** \`${{ needs.dry-run.outputs.supernet_used }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Site Code:** \`GCP\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
