@@ -314,3 +314,73 @@ else
 fi
 
 echo "Script execution complete."
+
+
+
+
+
+
+
+
+
+# --- NEW: Fetch Labels from the GCP Project ---
+echo "--- Fetching Labels from Project: ${SERVICE_PROJECT_ID} ---"
+PROJECT_LABELS=$(gcloud projects describe "$SERVICE_PROJECT_ID" --format="value(labels.list(format='key=value', separator=','))")
+
+if [ -n "$PROJECT_LABELS" ]; then
+  echo "Successfully fetched project labels: ${PROJECT_LABELS}"
+else
+  echo "No labels found on the project. Proceeding without labels."
+fi
+# ---
+
+
+
+
+
+
+
+
+# In the --apply block
+
+  # Apply Vertex AI Notebook Creation
+  echo "--- Applying: Vertex AI Notebook Creation ---"
+  if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found. Proceeding with creation."
+    
+    # Build the gcloud command in an array for flexibility
+    GCLOUD_COMMAND=(
+      "workbench" "instances" "create" "${NOTEBOOK_NAME}"
+      "--project=${SERVICE_PROJECT_ID}"
+      "--location=${ZONE}"
+      "--machine-type=${MACHINE_TYPE}"
+      "--tags=${NETWORK_TAG}"
+      "--subnet=${SUBNET_RESOURCE}"
+      "--network=${FULL_NETWORK}"
+      "--service-account=${VERTEX_SA}"
+      "--instance-owners=${INSTANCE_OWNER_EMAIL}"
+      "--kms-key=${CMEK_KEY}"
+      "--no-enable-public-ip"
+      "--shielded-vtpm"
+      "--shielded-integrity-monitoring"
+      "--metadata=notebook-upgrade-schedule='0 23 * * 0',enable-root-access=true,startup-script-url=${STARTUP_SCRIPT_GCS_PATH}"
+    )
+
+    # Conditionally add the --labels flag only if PROJECT_LABELS is not empty
+    if [ -n "$PROJECT_LABELS" ]; then
+      echo "Applying fetched project labels..."
+      GCLOUD_COMMAND+=( "--labels=${PROJECT_LABELS}" )
+    fi
+
+    # Execute the final command
+    gcloud "${GCLOUD_COMMAND[@]}"
+
+  else
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists. Skipping creation."
+  fi
+
+
+
+
+
+  
