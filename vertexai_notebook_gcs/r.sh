@@ -17,8 +17,15 @@ echo "DEBUG: Argument 1 received: '$1'"
 echo "DEBUG: MODE variable set to: '$MODE'"
 
 # --- Required Environment Variables (passed from GitHub Actions) ---
-# SERVICE_PROJECT_ID, ENVIRONMENT_TYPE, REGION, VPC_NAME, SUBNET_NAME,
-# INSTANCE_OWNER_EMAIL, USER_AD_GROUP_EMAIL, LAST_NAME_FIRST_INITIAL, MACHINE_TYPE
+# SERVICE_PROJECT_ID
+# ENVIRONMENT_TYPE
+# REGION
+# VPC_NAME
+# SUBNET_NAME
+# INSTANCE_OWNER_EMAIL
+# USER_AD_GROUP_EMAIL
+# LAST_NAME_FIRST_INITIAL
+# MACHINE_TYPE (optional)
 
 # Validate required environment variables
 if [ -z "$SERVICE_PROJECT_ID" ] || \
@@ -30,6 +37,7 @@ if [ -z "$SERVICE_PROJECT_ID" ] || \
    [ -z "$USER_AD_GROUP_EMAIL" ] || \
    [ -z "$LAST_NAME_FIRST_INITIAL" ]; then
   echo "Error: One or more required environment variables are not set."
+  echo "Required: SERVICE_PROJECT_ID, ENVIRONMENT_TYPE, REGION, VPC_NAME, SUBNET_NAME, INSTANCE_OWNER_EMAIL, USER_AD_GROUP_EMAIL, LAST_NAME_FIRST_INITIAL"
   exit 1
 fi
 
@@ -52,10 +60,13 @@ echo "MODE: $MODE"
 echo "-----------------------"
 
 # --- Input Format Validations ---
+# Validate SERVICE_PROJECT_ID format
 if ! [[ "$SERVICE_PROJECT_ID" =~ ^[a-z0-9-]+-(poc|ppoc)-[a-z0-9.-]+$ ]]; then
   echo "Error: SERVICE_PROJECT_ID '$SERVICE_PROJECT_ID' does not follow the expected format (e.g., test-poc-my-project)."
   exit 1
 fi
+
+# Validate email formats
 if ! [[ "$INSTANCE_OWNER_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
   echo "Error: INSTANCE_OWNER_EMAIL '$INSTANCE_OWNER_EMAIL' is not a valid email address format."
   exit 1
@@ -64,43 +75,31 @@ if ! [[ "$USER_AD_GROUP_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,
   echo "Error: USER_AD_GROUP_EMAIL '$USER_AD_GROUP_EMAIL' is not a valid email address format."
   exit 1
 fi
+
+# Validate LAST_NAME_FIRST_INITIAL format
 if ! [[ "$LAST_NAME_FIRST_INITIAL" =~ ^[a-z]+-[a-z]$ ]]; then
   echo "Error: LAST_NAME_FIRST_INITIAL '$LAST_NAME_FIRST_INITIAL' does not follow the expected format (e.g., smith-j)."
   exit 1
 fi
 
-
 # --- Determine Host Project ID and Network Tag based on VPC name mapping ---
 HOST_PROJECT_ID=""
 NETWORK_TAG=""
-
 case "$VPC_NAME" in
-  "vpc-ss-tru-nonprod-7")
+  "vpc-ss-tru-nonprod-7"|"vpc-ss-tru-prod-7")
     HOST_PROJECT_ID="akilapa-vpc"
-    NETWORK_TAG="tag-ss-nonprod"
+    NETWORK_TAG="tag-ss-${ENVIRONMENT_TYPE}"
     ;;
-  "vpc-ss-tru-prod-7")
-    HOST_PROJECT_ID="akilapa-vpc"
-    NETWORK_TAG="tag-ss-prod"
-    ;;
-  "vpc-jjk-tru-nonprod-7")
+  "vpc-jjk-tru-nonprod-7"|"vpc-jjk-tru-prod-7")
     HOST_PROJECT_ID="vpc-elese-aki"
-    NETWORK_TAG="tag-jjk-nonprod"
+    NETWORK_TAG="tag-jjk-${ENVIRONMENT_TYPE}"
     ;;
-  "vpc-jjk-tru-prod-7")
-    HOST_PROJECT_ID="vpc-elese-aki"
-    NETWORK_TAG="tag-jjk-prod"
-    ;;
-  "vpc-jjkkula-tru-nonprod-7")
+  "vpc-jjkkula-tru-nonprod-7"|"vpc-jjkkula-tru-prod-7")
     HOST_PROJECT_ID="aya-kudelo-pak"
-    NETWORK_TAG="tag-jjkkula-nonprod"
-    ;;
-  "vpc-jjkkula-tru-prod-7")
-    HOST_PROJECT_ID="aya-kudelo-pak"
-    NETWORK_TAG="tag-jjkkula-prod"
+    NETWORK_TAG="tag-jjkkula-${ENVIRONMENT_TYPE}"
     ;;
   *)
-    echo "Error: Could not determine host project and network tag for VPC name '$VPC_NAME'. Please check VPC name selection."
+    echo "Error: Could not determine host project for VPC name '$VPC_NAME'. Please check VPC name selection."
     exit 1
     ;;
 esac
@@ -124,6 +123,8 @@ echo "Vertex AI Notebook Name: $NOTEBOOK_NAME"
 # --- Construct Service Account and Service Agent Names ---
 VERTEX_SA="vertexai-sa@${SERVICE_PROJECT_ID}.iam.gserviceaccount.com"
 echo "Vertex AI Service Account: $VERTEX_SA"
+
+# Get the project number to construct the Notebooks API Service Agent name
 echo "Determining Service Project Number..."
 SERVICE_PROJECT_NUMBER=$(gcloud projects describe "$SERVICE_PROJECT_ID" --format="value(projectNumber)")
 NOTEBOOKS_SERVICE_AGENT="service-${SERVICE_PROJECT_NUMBER}@gcp-sa-notebooks.iam.gserviceaccount.com"
@@ -139,12 +140,9 @@ echo "CMEK Key: $CMEK_KEY"
 GCS_BUCKET_NAME="vertex-gcs-${SERVICE_PROJECT_ID}"
 GCS_CMEK_KEY="${CMEK_KEY}"
 echo "GCS Bucket Name: $GCS_BUCKET_NAME"
-echo "GCS Bucket CMEK Key: $GCS_CMEK_KEY"
 
-# --- Define Post-Startup Script for SSH Hardening ---
-# Using command substitution with a heredoc for maximum portability.
-# The 'EOF' is quoted to prevent any local shell variable expansion.
-STARTUP_SCRIPT=$(cat <<'EOF'
+# --- Define Post-Startup Script Content ---
+STARTUP_SCRIPT_CONTENT=$(cat <<'EOF'
 #!/bin/bash
 set -e
 echo "--- Starting SSH hardening script ---"
@@ -168,13 +166,18 @@ EOF
 if [ "$MODE" == "--dry-run" ]; then
   echo "--- Performing Dry Run for All Actions ---"
 
+  # Simulate Service Account Creation
   echo "Simulating: Ensure Vertex AI Service Account '${VERTEX_SA}' exists..."
+
+  # Simulate IAM Bindings
   echo "--- Simulating IAM Policy Bindings ---"
   echo "  - Simulating: Grant 'roles/iam.serviceAccountUser' to group '${USER_AD_GROUP_EMAIL}' on SA '${VERTEX_SA}' in project '${SERVICE_PROJECT_ID}'."
   echo "  - Simulating: Grant 'roles/compute.networkUser' on subnet '${SUBNET_NAME}' in host project '${HOST_PROJECT_ID}' to:"
   echo "    - Vertex AI SA: '${VERTEX_SA}'"
   echo "    - User AD Group: '${USER_AD_GROUP_EMAIL}'"
   echo "    - Notebooks Service Agent: '${NOTEBOOKS_SERVICE_AGENT}'"
+
+  # Simulate GCS Bucket Creation
   echo "--- Simulating GCS Bucket Creation ---"
   if ! gcloud storage buckets describe "gs://${GCS_BUCKET_NAME}" --project="${SERVICE_PROJECT_ID}" &> /dev/null; then
     echo "Simulating: gcloud storage buckets create \"gs://${GCS_BUCKET_NAME}\" ..."
@@ -184,8 +187,11 @@ if [ "$MODE" == "--dry-run" ]; then
 
   # Simulate Vertex AI Notebook Creation
   echo "--- Simulating Vertex AI Notebook Creation ---"
+  echo "Simulating: Would write startup script to a local file."
+  echo "Simulating: Would upload startup script to gs://${GCS_BUCKET_NAME}/scripts/post-startup.sh"
+  echo "Simulating: Would grant Notebooks Service Agent read access to the script in GCS."
   if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
-    echo "Simulating: gcloud workbench instances create \"${NOTEBOOK_NAME}\" with network tag '${NETWORK_TAG}' and applying post-startup script..."
+    echo "Simulating: gcloud workbench instances create \"${NOTEBOOK_NAME}\" using startup script from GCS..."
   else
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists. Skipping dry run for creation."
   fi
@@ -204,14 +210,32 @@ elif [ "$MODE" == "--apply" ]; then
 
   # Apply IAM policies
   echo "--- Applying: Required IAM policies ---"
+  echo "Granting 'Service Account User' role to AD Group on the Vertex AI SA..."
   gcloud iam service-accounts add-iam-policy-binding "${VERTEX_SA}" \
-    --project="${SERVICE_PROJECT_ID}" --member="group:${USER_AD_GROUP_EMAIL}" --role="roles/iam.serviceAccountUser"
+    --project="${SERVICE_PROJECT_ID}" \
+    --member="group:${USER_AD_GROUP_EMAIL}" \
+    --role="roles/iam.serviceAccountUser"
+
+  echo "Granting 'Compute Network User' role to Vertex AI SA on the subnet..."
   gcloud compute networks subnets add-iam-policy-binding "${SUBNET_NAME}" \
-    --project="${HOST_PROJECT_ID}" --region="${REGION}" --member="serviceAccount:${VERTEX_SA}" --role="roles/compute.networkUser"
+    --project="${HOST_PROJECT_ID}" \
+    --region="${REGION}" \
+    --member="serviceAccount:${VERTEX_SA}" \
+    --role="roles/compute.networkUser"
+
+  echo "Granting 'Compute Network User' role to AD Group on the subnet..."
   gcloud compute networks subnets add-iam-policy-binding "${SUBNET_NAME}" \
-    --project="${HOST_PROJECT_ID}" --region="${REGION}" --member="group:${USER_AD_GROUP_EMAIL}" --role="roles/compute.networkUser"
+    --project="${HOST_PROJECT_ID}" \
+    --region="${REGION}" \
+    --member="group:${USER_AD_GROUP_EMAIL}" \
+    --role="roles/compute.networkUser"
+
+  echo "Granting 'Compute Network User' role to Notebooks Service Agent on the subnet..."
   gcloud compute networks subnets add-iam-policy-binding "${SUBNET_NAME}" \
-    --project="${HOST_PROJECT_ID}" --region="${REGION}" --member="serviceAccount:${NOTEBOOKS_SERVICE_AGENT}" --role="roles/compute.networkUser"
+    --project="${HOST_PROJECT_ID}" \
+    --region="${REGION}" \
+    --member="serviceAccount:${NOTEBOOKS_SERVICE_AGENT}" \
+    --role="roles/compute.networkUser"
   echo "IAM policies applied."
 
   # Apply GCS Bucket Creation
@@ -219,14 +243,33 @@ elif [ "$MODE" == "--apply" ]; then
   if ! gcloud storage buckets describe "gs://${GCS_BUCKET_NAME}" --project="${SERVICE_PROJECT_ID}" &> /dev/null; then
     echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' not found. Proceeding with creation."
     gcloud storage buckets create "gs://${GCS_BUCKET_NAME}" \
-      --project="${SERVICE_PROJECT_ID}" --location="${REGION}" --default-kms-key="${GCS_CMEK_KEY}" --uniform-bucket-level-access
+      --project="${SERVICE_PROJECT_ID}" \
+      --location="${REGION}" \
+      --default-kms-key="${GCS_CMEK_KEY}" \
+      --uniform-bucket-level-access
   else
     echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' already exists. Skipping creation."
   fi
 
-  # In the --apply block of scripts/vertexai_notebook_gcs.sh
+  # --- Upload Startup Script to GCS ---
+  # 1. Write the script content to a temporary file on the runner
+  STARTUP_SCRIPT_LOCAL_PATH="/tmp/post-startup.sh"
+  echo "${STARTUP_SCRIPT_CONTENT}" > "${STARTUP_SCRIPT_LOCAL_PATH}"
+  echo "Startup script written to local file: ${STARTUP_SCRIPT_LOCAL_PATH}"
 
-  # In the --apply block of scripts/vertexai_notebook_gcs.sh
+  # 2. Define the script's path in GCS
+  STARTUP_SCRIPT_GCS_PATH="gs://${GCS_BUCKET_NAME}/scripts/post-startup.sh"
+  
+  # 3. Upload the script to GCS
+  echo "Uploading startup script to ${STARTUP_SCRIPT_GCS_PATH}..."
+  gcloud storage cp "${STARTUP_SCRIPT_LOCAL_PATH}" "${STARTUP_SCRIPT_GCS_PATH}" --project="${SERVICE_PROJECT_ID}"
+
+  # 4. Grant the Notebooks Service Agent permission to read the script file
+  echo "Granting read access to the Notebooks Service Agent on the startup script..."
+  gcloud storage objects add-iam-policy-binding "${STARTUP_SCRIPT_GCS_PATH}" \
+    --project="${SERVICE_PROJECT_ID}" \
+    --member="serviceAccount:${NOTEBOOKS_SERVICE_AGENT}" \
+    --role="roles/storage.objectViewer"
 
   # Apply Vertex AI Notebook Creation
   echo "--- Applying: Vertex AI Notebook Creation ---"
@@ -246,7 +289,7 @@ elif [ "$MODE" == "--apply" ]; then
       --owner="${INSTANCE_OWNER_EMAIL}" \
       --enable-notebook-upgrade-scheduling \
       --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" \
-      --metadata="enable-root-access=true,startup-script=${STARTUP_SCRIPT}" \
+      --metadata="enable-root-access=true,startup-script-url=${STARTUP_SCRIPT_GCS_PATH}" \
       --kms-key="${CMEK_KEY}" \
       --no-shielded-secure-boot \
       --shielded-integrity-monitoring \
@@ -254,6 +297,10 @@ elif [ "$MODE" == "--apply" ]; then
   else
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists. Skipping creation."
   fi
+
+  # 5. Clean up the local temporary file
+  echo "Cleaning up local startup script file..."
+  rm "${STARTUP_SCRIPT_LOCAL_PATH}"
 
 else
   echo "Error: Invalid mode. Use '--dry-run' or '--apply'."
