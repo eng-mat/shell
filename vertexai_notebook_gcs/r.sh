@@ -142,9 +142,9 @@ echo "GCS Bucket Name: $GCS_BUCKET_NAME"
 echo "GCS Bucket CMEK Key: $GCS_CMEK_KEY"
 
 # --- Define Post-Startup Script for SSH Hardening ---
-# Using a heredoc to define the multi-line script content.
+# Using command substitution with a heredoc for maximum portability.
 # The 'EOF' is quoted to prevent any local shell variable expansion.
-read -r -d '' STARTUP_SCRIPT << 'EOF'
+STARTUP_SCRIPT=$(cat <<'EOF'
 #!/bin/bash
 set -e
 echo "--- Starting SSH hardening script ---"
@@ -162,6 +162,7 @@ echo "Appended strong SSH configuration to /etc/ssh/sshd_config."
 sudo systemctl restart sshd
 echo "SSH service restarted. Hardening script complete. ---"
 EOF
+)
 
 # --- Execute gcloud commands based on MODE ---
 if [ "$MODE" == "--dry-run" ]; then
@@ -242,7 +243,7 @@ elif [ "$MODE" == "--apply" ]; then
       --owner="${INSTANCE_OWNER_EMAIL}" \
       --enable-notebook-upgrade-scheduling \
       --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" \
-      --metadata="jupyter_notebook_version=JUPYTER_4_PREVIEW,startup-script=${STARTUP_SCRIPT}" \
+      --metadata="enable-root-access=true,startup-script=${STARTUP_SCRIPT}" \
       --kms-key="${CMEK_KEY}" \
       --no-shielded-secure-boot \
       --shielded-integrity-monitoring \
