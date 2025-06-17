@@ -273,26 +273,33 @@ elif [ "$MODE" == "--apply" ]; then
 
   # In the --apply block
 
+  # In the --apply block
+
   # Apply Vertex AI Notebook Creation
   echo "--- Applying Vertex AI Notebook Creation ---"
-  if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
+  if ! gcloud compute instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --zone="${ZONE}" &> /dev/null; then
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Proceeding with creation."
-    gcloud workbench instances create "${NOTEBOOK_NAME}" \
+    
+    # Using 'gcloud compute instances create' as a robust workaround
+    gcloud compute instances create "${NOTEBOOK_NAME}" \
       --project="${SERVICE_PROJECT_ID}" \
-      --location="${ZONE}" \
+      --zone="${ZONE}" \
       --machine-type="${MACHINE_TYPE}" \
-      --tags="${NETWORK_TAG}" \
-      --subnet="${SUBNET_RESOURCE}" \
-      --network="${FULL_NETWORK}" \
       --service-account="${VERTEX_SA}" \
-      --instance-owners="${INSTANCE_OWNER_EMAIL}" \
-      --kms-key="${CMEK_KEY}" \
-      --no-enable-public-ip \
+      --tags="${NETWORK_TAG}" \
+      --network-interface="subnet=${SUBNET_NAME},no-address" \
+      --boot-disk-size=150GB \
+      --boot-disk-type=pd-balanced \
+      --create-disk="auto-delete=yes,boot=no,device-name=data-disk-1,image-project=deeplearning-platform-release,image-family=common-cpu,size=100,type=pd-balanced" \
+      --image-project=deeplearning-platform-release \
+      --image-family=tf-ent-2-13-cpu-notebooks \
+      --boot-disk-kms-key="${CMEK_KEY}" \
+      --data-disk-kms-key="${CMEK_KEY}" \
       --shielded-vtpm \
       --shielded-integrity-monitoring \
-      --enable-notebook-upgrade-scheduling \
-      --notebook-upgrade-schedule="WEEKLY:SUNDAY:23:00" \
-      --metadata="enable-root-access=true,startup-script-url=${STARTUP_SCRIPT_GCS_PATH}"
+      --labels="managed-by=workbench,consumer-project-id=${SERVICE_PROJECT_ID}" \
+      --metadata="proxy-user-mail=${INSTANCE_OWNER_EMAIL},notebook-upgrade-schedule=0 23 * * 0,enable-root-access=true,startup-script-url=${STARTUP_SCRIPT_GCS_PATH}"
+      
   else
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists in zone '${ZONE}'. Skipping creation."
   fi
