@@ -226,6 +226,8 @@ elif [ "$MODE" == "--apply" ]; then
 
   # In the --apply block of scripts/vertexai_notebook_gcs.sh
 
+  # In the --apply block of scripts/vertexai_notebook_gcs.sh
+
   # Apply Vertex AI Notebook Creation
   echo "--- Applying: Vertex AI Notebook Creation ---"
   if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
@@ -244,8 +246,7 @@ elif [ "$MODE" == "--apply" ]; then
       --owner="${INSTANCE_OWNER_EMAIL}" \
       --enable-notebook-upgrade-scheduling \
       --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" \
-      --metadata=enable-root-access=true \
-      --metadata-from-file=startup-script=<(echo "${STARTUP_SCRIPT}") \
+      --metadata="enable-root-access=true,startup-script=${STARTUP_SCRIPT}" \
       --kms-key="${CMEK_KEY}" \
       --no-shielded-secure-boot \
       --shielded-integrity-monitoring \
