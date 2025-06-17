@@ -271,31 +271,30 @@ elif [ "$MODE" == "--apply" ]; then
     --member="serviceAccount:${NOTEBOOKS_SERVICE_AGENT}" \
     --role="roles/storage.objectViewer"
 
+  # In the --apply block
+
   # Apply Vertex AI Notebook Creation
-  echo "--- Applying: Vertex AI Notebook Creation ---"
+  echo "--- Applying Vertex AI Notebook Creation ---"
   if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
-    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found. Proceeding with creation."
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Proceeding with creation."
     gcloud workbench instances create "${NOTEBOOK_NAME}" \
       --project="${SERVICE_PROJECT_ID}" \
       --location="${ZONE}" \
       --machine-type="${MACHINE_TYPE}" \
-      --boot-disk-size=150GB \
-      --data-disk-size=100GB \
+      --tags="${NETWORK_TAG}" \
       --subnet="${SUBNET_RESOURCE}" \
       --network="${FULL_NETWORK}" \
       --service-account="${VERTEX_SA}" \
-      --tags="${NETWORK_TAG}" \
-      --no-enable-public-ip \
-      --owner="${INSTANCE_OWNER_EMAIL}" \
-      --enable-notebook-upgrade-scheduling \
-      --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" \
-      --metadata="enable-root-access=true,startup-script-url=${STARTUP_SCRIPT_GCS_PATH}" \
+      --instance-owners="${INSTANCE_OWNER_EMAIL}" \
       --kms-key="${CMEK_KEY}" \
-      --no-shielded-secure-boot \
+      --no-enable-public-ip \
+      --shielded-vtpm \
       --shielded-integrity-monitoring \
-      --shielded-vtpm
+      --enable-notebook-upgrade-scheduling \
+      --notebook-upgrade-schedule="WEEKLY:SUNDAY:23:00" \
+      --metadata="enable-root-access=true,startup-script-url=${STARTUP_SCRIPT_GCS_PATH}"
   else
-    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists. Skipping creation."
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists in zone '${ZONE}'. Skipping creation."
   fi
 
   # 5. Clean up the local temporary file
