@@ -189,7 +189,7 @@ if [ "$MODE" == "--dry-run" ]; then
   echo "--- Simulating Vertex AI Notebook Creation ---"
   echo "Simulating: Would write startup script to a local file."
   echo "Simulating: Would upload startup script to gs://${GCS_BUCKET_NAME}/scripts/post-startup.sh"
-  echo "Simulating: Would grant Notebooks Service Agent read access to the script in GCS."
+  echo "Simulating: Would grant Notebooks Service Agent read access to the GCS BUCKET."
   if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
     echo "Simulating: gcloud workbench instances create \"${NOTEBOOK_NAME}\" using startup script from GCS..."
   else
@@ -264,9 +264,9 @@ elif [ "$MODE" == "--apply" ]; then
   echo "Uploading startup script to ${STARTUP_SCRIPT_GCS_PATH}..."
   gcloud storage cp "${STARTUP_SCRIPT_LOCAL_PATH}" "${STARTUP_SCRIPT_GCS_PATH}" --project="${SERVICE_PROJECT_ID}"
 
-  # 4. Grant the Notebooks Service Agent permission to read the script file
-  echo "Granting read access to the Notebooks Service Agent on the startup script..."
-  gcloud storage objects add-iam-policy-binding "${STARTUP_SCRIPT_GCS_PATH}" \
+  # 4. Grant the Notebooks Service Agent permission to read objects from the BUCKET
+  echo "Granting read access to the Notebooks Service Agent on the GCS bucket..."
+  gcloud storage buckets add-iam-policy-binding "gs://${GCS_BUCKET_NAME}" \
     --project="${SERVICE_PROJECT_ID}" \
     --member="serviceAccount:${NOTEBOOKS_SERVICE_AGENT}" \
     --role="roles/storage.objectViewer"
