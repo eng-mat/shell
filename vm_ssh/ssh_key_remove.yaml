@@ -1,0 +1,61 @@
+name: 'Admin: Delete File on GCP VM'
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'The GCP Project ID where the VM is located.'
+        required: true
+      instance_name:
+        description: 'The name of the target VM instance.'
+        required: true
+      zone:
+        description: 'The GCP zone of the target VM (e.g., us-central1-a).'
+        required: true
+      file_path:
+        description: 'The full path to the file to be deleted (e.g., /home/user/.ssh/id_rsa).'
+        required: true
+
+jobs:
+  delete-remote-file:
+    name: 'Delete File on VM'
+    runs-on: ubuntu-latest
+
+    # Add permissions for Workload Identity Federation
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: 'Set up Google Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: 'Display Inputs (for logging)'
+        run: |
+          echo "Project ID: ${{ inputs.project_id }}"
+          echo "Instance Name: ${{ inputs.instance_name }}"
+          echo "Zone: ${{ inputs.zone }}"
+          echo "File to Delete: ${{ inputs.file_path }}"
+
+      - name: 'Execute Remote Deletion Command'
+        run: |
+          echo "Attempting to delete '${{ inputs.file_path }}' on '${{ inputs.instance_name }}'..."
+          gcloud compute ssh ${{ inputs.instance_name }} \
+            --project=${{ inputs.project_id }} \
+            --zone=${{ inputs.zone }} \
+            --command="sudo rm -f ${{ inputs.file_path }}" \
+            --quiet
+        
+      - name: 'Deletion Command Sent'
+        run: |
+          echo "✅ Successfully sent the deletion command."
+          echo "Please manually verify on the VM that the file has been removed."
