@@ -1,0 +1,64 @@
+name: 'Admin: Rename File on GCP VM'
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'The GCP Project ID where the VM is located.'
+        required: true
+      instance_name:
+        description: 'The name of the target VM instance.'
+        required: true
+      zone:
+        description: 'The GCP zone of the target VM (e.g., us-central1-a).'
+        required: true
+      file_path:
+        description: 'The full path to the file to be renamed (e.g., /home/user/.ssh/id_rsa).'
+        required: true
+
+jobs:
+  rename-remote-file:
+    name: 'Rename File on VM'
+    runs-on: ubuntu-latest
+
+    # Add permissions for Workload Identity Federation
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: 'Set up Google Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      - name: 'Display Inputs (for logging)'
+        run: |
+          echo "Project ID: ${{ inputs.project_id }}"
+          echo "Instance Name: ${{ inputs.instance_name }}"
+          echo "Zone: ${{ inputs.zone }}"
+          echo "File to Rename: ${{ inputs.file_path }}"
+          echo "New Name: ${{ inputs.file_path }}_backup"
+
+      - name: 'Execute Remote Rename Command'
+        run: |
+          echo "Attempting to rename '${{ inputs.file_path }}' to '${{ inputs.file_path }}_backup' on '${{ inputs.instance_name }}'..."
+          # The remote command uses quotes to handle paths with spaces or special characters.
+          # If the source file does not exist, this step will fail, which is the desired behavior.
+          gcloud compute ssh ${{ inputs.instance_name }} \
+            --project=${{ inputs.project_id }} \
+            --zone=${{ inputs.zone }} \
+            --command="sudo mv \"${{ inputs.file_path }}\" \"${{ inputs.file_path }}_backup\"" \
+            --quiet
+        
+      - name: 'Rename Command Sent'
+        run: |
+          echo "✅ Successfully sent the rename command."
+          echo "The file should now be located at: '${{ inputs.file_path }}_backup'"
