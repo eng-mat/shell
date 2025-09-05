@@ -1,0 +1,86 @@
+name: 'Start GCP VM (2-Step)'
+
+on:
+  workflow_dispatch:
+    inputs:
+      gcp_project_id:
+        description: 'The GCP Project ID where the VM resides'
+        required: true
+        type: string
+      gcp_zone:
+        description: 'The zone of the VM (e.g., us-central1-a)'
+        required: true
+        type: string
+      instance_name:
+        description: 'The name of the VM instance to start'
+        required: true
+        type: string
+
+jobs:
+  # =================================================================
+  # JOB 1: VALIDATE AND DRY RUN
+  # =================================================================
+  dry-run:
+    name: 'Step 1: Validate & Dry Run Start Plan'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
+          service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
+
+      - name: 'Set up gcloud CLI'
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          project_id: '${{ inputs.gcp_project_id }}'
+
+      - name: 'Display Start Plan'
+        run: |
+          echo "✅ DRY RUN: The next job will START the following VM:"
+          echo "--------------------------------------------------"
+          echo "Project ID:    ${{ inputs.gcp_project_id }}"
+          echo "Zone:          ${{ inputs.gcp_zone }}"
+          echo "Instance Name: ${{ inputs.instance_name }}"
+          echo "--------------------------------------------------"
+          echo " "
+          echo "If this is incorrect, cancel the workflow run now."
+
+  # =================================================================
+  # JOB 2: APPLY START
+  # =================================================================
+  execute-start:
+    name: 'Step 2: Execute VM Start'
+    runs-on: ubuntu-latest
+    needs: dry-run
+    if: github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
+          service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
+
+      - name: 'Set up gcloud CLI'
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          project_id: '${{ inputs.gcp_project_id }}'
+
+      - name: 'Execute Start Command'
+        run: |
+          echo "🟢 Starting VM: ${{ inputs.instance_name }} in zone ${{ inputs.gcp_zone }}"
+          gcloud compute instances start ${{ inputs.instance_name }} \
+            --zone=${{ inputs.gcp_zone }} \
+            --project=${{ inputs.gcp_project_id }} \
+            --quiet
+          echo "✅ Successfully started VM."
